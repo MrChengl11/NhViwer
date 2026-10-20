@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Nhviwer</string>
+    <string name="download_channel_name">下载任务</string>
+    <string name="download_channel_desc">显示漫画下载进度</string>
+</resources>

@@ -1,0 +1,38 @@
+# ---- Android / Gradle ----
+*.iml
+.gradle/
+build/
+local.properties
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# ---- 实机截图（含 18+ 内容，不入库） ----
+smoke/
+
+# ---- 分发包（APK 产物，不入库） ----
+dist/
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- Node（本地反代脚本） ----
+node_modules/
+logs/
+*.log
+
+# ---- 凭证（绝不能入库） ----
+*.jks
+*.keystore
+keystore.properties
+.env*
+*.pem

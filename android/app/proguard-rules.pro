@@ -1,0 +1,3 @@
+-keep class com.mangaviewer.app.data.remote.dto.** { *; }
+-keepattributes *Annotation*, InnerClasses, Signature, RuntimeVisibleAnnotations
+-dontwarn org.jsoup.**
