@@ -2,7 +2,7 @@
 
 <img src="docs/icon.png" width="112" align="right" alt="Nhviwer 图标">
 
-一个 **nhentai 风格的漫画客户端**，功能对齐 [nhentai.net](https://nhentai.net/) 的浏览 / 搜索 / 收藏 / 评论 / 下载，
+一个 漫画客户端，功能对齐 [nhentai.net](https://nhentai.net/) 的浏览 / 搜索 / 收藏 / 评论 / 下载，
 交互与信息架构参考成熟 Android 客户端 [EhViewer_CN_SXJ](https://github.com/xiaojieonly/Ehviewer_CN_SXJ)，
 UI 使用 Google **Material Design 3（Expressive：大圆角、动态取色、弹簧动效）** 构建。
 
