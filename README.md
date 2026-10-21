@@ -32,7 +32,7 @@ UI 使用 Google **Material Design 3（Expressive：大圆角、动态取色、�
 | 图片 | Coil 3.6.3 | 自定义 Interceptor：直连或走本地反代，多图床后备 |
 | 后台 | 前台服务（DATA_SYNC 类型） | 下载进度常驻通知 |
 
-规模：**39 个 Kotlin 文件 / 5472 行**，debug APK 21.3 MB（22,380,740 字节）。
+规模：**39 个 Kotlin 文件 / 5472 行**，debug APK 21.1 MB（22,153,268 字节，v1.0.1）。
 
 ## 2. 架构总览
 
