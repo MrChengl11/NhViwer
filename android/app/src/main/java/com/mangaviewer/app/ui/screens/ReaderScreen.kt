@@ -1,32 +1,42 @@
 package com.mangaviewer.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Autorenew
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,6 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, navController: NavController) {
     val settingsState by container.settings.settingsFlow.collectAsState(initial = null)
@@ -73,6 +84,16 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
+    // 底部页数列表的显隐；阅读页中心的小正方形点击后唤出。
+    var pagePickerOpen by remember { mutableStateOf(false) }
+    // 各布局把自己的翻页 / 跳页 / 当前页动作注册到这里，由统一手势层和页数列表调用。
+    val stepRef = remember {
+        object {
+            var handler: (Int) -> Unit = {}
+            var jump: (Int) -> Unit = {}
+            var current: () -> Int = { 0 }
+        }
+    }
 
     LaunchedEffect(galleryId) {
         error = null
@@ -94,7 +115,53 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
             .onFailure { error = it.message ?: "加载失败" }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    // 手势挂在外层 Box（父级）：子级 Pager / LazyColumn 先拿到事件，拖动交给它们滚动；
+    // 只有真正的“点击”才在这里处理。旧实现把 detectTapGestures 放在内容之上的全屏子 Box，
+    // 命中测试会挡住下层，滑动全被当成点击（连续滚动布局完全滑不动）。
+    val reverse = settings.readerRtl
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(reverse, zoom) {
+                val centerHalfPx = 36.dp.toPx()
+                detectTapGestures(
+                    onDoubleTap = { point ->
+                        if (zoom > 1f) {
+                            zoom = 1f
+                            panX = 0f
+                            panY = 0f
+                        } else {
+                            val target = 2.5f
+                            zoom = target
+                            panX = -(point.x - size.width / 2f) * (target - 1f)
+                            panY = -(point.y - size.height / 2f) * (target - 1f)
+                        }
+                    },
+                    onTap = { offset ->
+                        if (zoom > 1f) {
+                            zoom = 1f
+                            panX = 0f
+                            panY = 0f
+                        } else {
+                            val cx = size.width / 2f
+                            val cy = size.height / 2f
+                            val inCenter = offset.x >= cx - centerHalfPx &&
+                                offset.x <= cx + centerHalfPx &&
+                                offset.y >= cy - centerHalfPx &&
+                                offset.y <= cy + centerHalfPx
+                            val third = size.width / 3f
+                            when {
+                                inCenter -> pagePickerOpen = true
+                                offset.x < third -> stepRef.handler(if (reverse) 1 else -1)
+                                offset.x > third * 2 -> stepRef.handler(if (reverse) -1 else 1)
+                                else -> overlay = !overlay
+                            }
+                        }
+                    },
+                )
+            },
+    ) {
         val list = paths
         when {
             error != null -> ErrorBox(error!!, onRetry = { scope.launch { error = null; paths = null } })
@@ -113,8 +180,6 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                         }
                     }
                 }
-                // 各布局把自己的翻页动作注册到这里，由统一手势层调用，避免每个分支各挂一层 pointerInput。
-                val stepRef = remember { object { var handler: (Int) -> Unit = {} } }
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -175,6 +240,11 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                             val target = (pagerState.currentPage + step).coerceIn(0, spreads - 1)
                             scope.launch { pagerState.animateScrollToPage(target) }
                         }
+                        stepRef.jump = { pageIndex ->
+                            val target = (pageIndex / 2).coerceIn(0, spreads - 1)
+                            scope.launch { pagerState.animateScrollToPage(target) }
+                        }
+                        stepRef.current = { (pagerState.currentPage * 2).coerceAtMost(list.lastIndex) }
                         if (settings.showPageNumber) {
                             val cur = (pagerState.currentPage * 2 + 1).coerceAtMost(list.size)
                             val end = (cur + 1).coerceAtMost(list.size)
@@ -219,6 +289,11 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                             val target = (pagerState.currentPage + step).coerceIn(0, list.lastIndex)
                             scope.launch { pagerState.animateScrollToPage(target) }
                         }
+                        stepRef.jump = { pageIndex ->
+                            val target = pageIndex.coerceIn(0, list.lastIndex)
+                            scope.launch { pagerState.animateScrollToPage(target) }
+                        }
+                        stepRef.current = { pagerState.currentPage }
                         if (settings.showPageNumber) {
                             Text(
                                 "${pagerState.currentPage + 1} / ${list.size}",
@@ -246,6 +321,15 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                 pager = { pagerState.currentPage },
                             )
                         }
+                        stepRef.handler = { step ->
+                            val target = (pagerState.currentPage + step).coerceIn(0, list.lastIndex)
+                            scope.launch { pagerState.animateScrollToPage(target) }
+                        }
+                        stepRef.jump = { pageIndex ->
+                            val target = pageIndex.coerceIn(0, list.lastIndex)
+                            scope.launch { pagerState.animateScrollToPage(target) }
+                        }
+                        stepRef.current = { pagerState.currentPage }
                         if (settings.showPageNumber) {
                             Text(
                                 "${pagerState.currentPage + 1} / ${list.size}",
@@ -275,44 +359,18 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                 )
                             }
                         }
+                        stepRef.jump = { pageIndex ->
+                            scope.launch { state.scrollToItem(pageIndex.coerceIn(0, list.lastIndex)) }
+                        }
+                        stepRef.current = { state.firstVisibleItemIndex }
                     }
                 }
                 }
-                                // 统一手势层（永远在内容之上）：单击按分区翻页/中间切换工具栏；双击放大 2.5x；放大后单击还原。
-                val reverse = settings.readerRtl
-                Box(
-                    Modifier.fillMaxSize().pointerInput(reverse, zoom) {
-                        detectTapGestures(
-                            onDoubleTap = { point ->
-                                if (zoom > 1f) {
-                                    zoom = 1f
-                                    panX = 0f
-                                    panY = 0f
-                                } else {
-                                    val target = 2.5f
-                                    zoom = target
-                                    panX = -(point.x - size.width / 2f) * (target - 1f)
-                                    panY = -(point.y - size.height / 2f) * (target - 1f)
-                                }
-                            },
-                            onTap = { offset ->
-                                if (zoom > 1f) {
-                                    zoom = 1f
-                                    panX = 0f
-                                    panY = 0f
-                                } else {
-                                    val third = size.width / 3f
-                                    val step = when {
-                                        offset.x < third -> if (reverse) 1 else -1
-                                        offset.x > third * 2 -> if (reverse) -1 else 1
-                                        else -> 0
-                                    }
-                                    if (step == 0) overlay = !overlay else stepRef.handler(step)
-                                }
-                            },
-                        )
-                    },
-                )
+
+                // 中心小型正方形：仅作视觉提示（不带 pointerInput，不能挡住下层 Pager / LazyColumn 的滑动）。
+                if (overlay && zoom <= 1f) {
+                    CenterPageVisual()
+                }
                 // 放大后才挂拖动层，避免吃掉了 Pager 的翻页手势。
                 if (zoom > 1f) {
                     Box(
@@ -380,6 +438,19 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                 }
             }
         }
+
+        val pageList = paths
+        if (pagePickerOpen && pageList != null && pageList.isNotEmpty()) {
+            PagePickerSheet(
+                total = pageList.size,
+                currentPage = stepRef.current().coerceIn(0, pageList.lastIndex),
+                onPick = { index ->
+                    pagePickerOpen = false
+                    stepRef.jump(index)
+                },
+                onDismiss = { pagePickerOpen = false },
+            )
+        }
     }
 }
 
@@ -417,5 +488,92 @@ private fun PageImage(
         // 预加载窗口由 Pager/Lazy 的相邻项组合决定；preload 仅用于潜在的自定义预热。
         @Suppress("UNUSED_EXPRESSION")
         (preload >= 0 && kotlin.math.abs(pager() - index) <= preload)
+    }
+}
+
+/** 阅读页中心小方块的视觉提示。点击判定在 ReaderScreen 根层 onTap 里做，这里不挂 pointerInput，避免挡滑动。 */
+@Composable
+private fun BoxScope.CenterPageVisual() {
+    Box(
+        Modifier
+            .align(Alignment.Center)
+            .size(72.dp)
+            .background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.GridView,
+            contentDescription = "页数列表",
+            tint = Color.White.copy(alpha = 0.75f),
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/** 底部页数列表：九宫格式页码，点一下跳到对应页。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PagePickerSheet(
+    total: Int,
+    currentPage: Int,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "跳转到页面",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "共 $total 页 · 当前 ${currentPage + 1}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(56.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(total, key = { it }) { index ->
+                    val selected = index == currentPage
+                    Box(
+                        Modifier
+                            .size(52.dp)
+                            .background(
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                            )
+                            .pointerInput(index) {
+                                detectTapGestures(onTap = { onPick(index) })
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "${index + 1}",
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

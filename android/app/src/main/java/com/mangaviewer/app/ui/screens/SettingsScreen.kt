@@ -236,7 +236,7 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
 
             SectionTitle("关于")
             Text(
-                "MangaViewer 仅用于技术研究与学习，内容来自第三方站点，应用不托管任何内容；请遵守当地法律法规。",
+                "Nhviwer 仅用于技术研究与学习，内容来自第三方站点，应用不托管任何内容；请遵守当地法律法规。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
