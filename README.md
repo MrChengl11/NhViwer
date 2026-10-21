@@ -119,7 +119,15 @@ targetSdk 37 下 Android 13+ 必须**运行时申请** `POST_NOTIFICATIONS`，�
 - 登录凭证（API Key）仅存本地 App 私有目录（`manga-auth`），不写日志、不外发
 - 账号收藏同步是**用户主动触发**的：只在你点「同步收藏」或在登录状态下收藏/取消收藏时请求远端
 
-## 6. 开发记录
+## 6. 下载与安装
+
+最新版见 GitHub Releases：<https://github.com/MrChengl11/NhViwer/releases>
+
+- `Nhviwer-1.0.1.apk` — v1.0.1（versionCode 2，debug 签名，22,153,268 字节，sha256 `08f374cc9e494e254d727e5abbb3b8b31625daa78d87988ec9dfa9993ce5d2cf`）
+- 客户端不含任何内容、也不内置代理：请在「设置」里选择「直连」（设备已挂代理）或「本地反代」（`node tools/nhentai-proxy.mjs`，默认 `http://127.0.0.1:8787`）
+- 从源码构建：`cd android && ./gradlew :app:assembleDebug`
+
+## 7. 开发记录
 
 | 里程碑 | 状态 |
 | --- | --- |
