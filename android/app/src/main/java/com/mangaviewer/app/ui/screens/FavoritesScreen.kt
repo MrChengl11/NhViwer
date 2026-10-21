@@ -1,19 +1,21 @@
 package com.mangaviewer.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
@@ -35,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.mangaviewer.app.data.AppContainer
@@ -42,10 +45,15 @@ import com.mangaviewer.app.data.db.ALL_FOLDER
 import com.mangaviewer.app.data.db.DEFAULT_FOLDER
 import com.mangaviewer.app.data.db.FavoriteEntity
 import com.mangaviewer.app.data.model.GalleryUi
+import com.mangaviewer.app.download.DownloadService
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.GalleryCard
 import kotlinx.coroutines.launch
 
+/**
+ * 收藏页：长按任意一本进入多选，选中的卡片显示勾选蒙层；右上角（同步按钮旁）提供
+ * 下载 / 删除两个批量操作按钮，卡片下方不再放单独的删除按钮。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FavoritesScreen(container: AppContainer, navController: NavController) {
@@ -55,15 +63,68 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
     var syncing by remember { mutableStateOf(false) }
     val counts by container.favorites.observeFolderCounts().collectAsState(initial = emptyMap())
     var folder by remember { mutableStateOf(ALL_FOLDER) }
-    var pendingDelete by remember { mutableStateOf<FavoriteEntity?>(null) }
+    var selection by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     val shown = if (folder == ALL_FOLDER) favorites else favorites.filter { it.folder == folder }
+    val selectedEntries = favorites.filter { it.galleryId in selection }
+    val selecting = selectedEntries.isNotEmpty()
+
+    // 返回键先退出多选，不离开页面。
+    BackHandler(enabled = selecting) { selection = emptySet() }
+
+    fun toggle(favorite: FavoriteEntity) {
+        val id = favorite.galleryId
+        selection = if (id in selection) selection - id else selection + id
+    }
+
+    fun downloadSelected() {
+        val targets = selectedEntries
+        if (targets.isEmpty() || downloading) return
+        downloading = true
+        scope.launch {
+            var ok = 0
+            var failed = 0
+            for (entity in targets) {
+                val detail = runCatching { container.galleries.detail(entity.galleryId) }.getOrNull()
+                if (detail == null) {
+                    failed++
+                    continue
+                }
+                val enqueued = runCatching {
+                    container.downloads.enqueue(detail.ui, detail.pages.map { it.path })
+                }
+                if (enqueued.isSuccess) ok++ else failed++
+            }
+            if (ok > 0 && runCatching { container.settings.current().foregroundDownloads }.getOrDefault(false)) {
+                DownloadService.start(context)
+            }
+            downloading = false
+            selection = emptySet()
+            snackbar.showSnackbar(
+                when {
+                    ok == 0 -> "加入下载队列失败（$failed 本）"
+                    failed == 0 -> "已加入下载队列：$ok 本"
+                    else -> "已加入 $ok 本，$failed 本失败"
+                },
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("收藏（${favorites.size}）") },
+                navigationIcon = {
+                    if (selecting) {
+                        IconButton(onClick = { selection = emptySet() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                        }
+                    }
+                },
+                title = { Text(if (selecting) "已选 ${selectedEntries.size}" else "收藏（${favorites.size}）") },
                 actions = {
                     if (auth.isLoggedIn) {
                         IconButton(
@@ -84,6 +145,14 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
                             },
                         ) { Icon(Icons.Filled.Sync, contentDescription = "同步账号收藏") }
                     }
+                    IconButton(
+                        enabled = selecting && !downloading,
+                        onClick = { downloadSelected() },
+                    ) { Icon(Icons.Filled.Download, contentDescription = "下载选中") }
+                    IconButton(
+                        enabled = selecting,
+                        onClick = { confirmDelete = true },
+                    ) { Icon(Icons.Filled.Delete, contentDescription = "删除选中") }
                     IconButton(onClick = { navController.navigate("login") }) {
                         Icon(Icons.Filled.AccountCircle, contentDescription = if (auth.isLoggedIn) "账号" else "登录")
                     }
@@ -94,21 +163,27 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             LazyRow(
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(vertical = 8.dp),
             ) {
                 item {
                     FilterChip(
                         selected = folder == ALL_FOLDER,
-                        onClick = { folder = ALL_FOLDER },
+                        onClick = {
+                            folder = ALL_FOLDER
+                            selection = emptySet()
+                        },
                         label = { Text("全部 ${favorites.size}") },
                     )
                 }
                 itemsIndexed(counts.keys.sorted()) { _, key ->
                     FilterChip(
                         selected = folder == key,
-                        onClick = { folder = key },
+                        onClick = {
+                            folder = key
+                            selection = emptySet()
+                        },
                         leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
                         label = { Text("${folderLabel(key)} ${counts[key] ?: 0}") },
                     )
@@ -119,45 +194,61 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(140.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                    contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(shown, key = { it.galleryId }) { entity ->
-                        Column {
-                            GalleryCard(
-                                item = entity.toUi(),
-                                onClick = { navController.navigate("detail/${entity.galleryId}") },
-                                favorite = true,
-                            )
-                            IconButton(onClick = { pendingDelete = entity }) {
-                                Icon(Icons.Filled.Delete, contentDescription = "取消收藏")
-                            }
-                        }
+                        GalleryCard(
+                            item = entity.toUi(),
+                            onClick = {
+                                if (selection.isNotEmpty()) toggle(entity)
+                                else navController.navigate("detail/${entity.galleryId}")
+                            },
+                            onLongClick = { selection = selection + entity.galleryId },
+                            selected = entity.galleryId in selection,
+                            favorite = true,
+                        )
                     }
                 }
             }
         }
     }
 
-    val target = pendingDelete
-    if (target != null) {
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("取消收藏？") },
-            text = { Text(target.title) },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        container.favorites.remove(target.galleryId)
-                        // 登录后同步删除到云端，失败不阻断本地操作
-                        runCatching { container.account.pushFavorite(target.galleryId, false) }
-                    }
-                    pendingDelete = null
-                }) { Text("删除") }
-            },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
-        )
+    if (confirmDelete) {
+        val targets = selectedEntries
+        if (targets.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text("取消收藏 ${targets.size} 本？") },
+                text = {
+                    Text(
+                        buildString {
+                            append(targets.take(5).joinToString("\n") { it.title.ifBlank { "#${it.galleryId}" } })
+                            if (targets.size > 5) append("\n…")
+                        },
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val ids = targets.map { it.galleryId }
+                        confirmDelete = false
+                        selection = emptySet()
+                        scope.launch {
+                            ids.forEach { id ->
+                                container.favorites.remove(id)
+                                // 登录后同步删除到云端，失败不阻断本地操作
+                                runCatching { container.account.pushFavorite(id, false) }
+                            }
+                            snackbar.showSnackbar("已取消收藏 ${ids.size} 本")
+                        }
+                    }) { Text("删除") }
+                },
+                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
+            )
+        } else {
+            confirmDelete = false
+        }
     }
 }
 

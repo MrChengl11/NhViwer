@@ -1,12 +1,10 @@
 package com.mangaviewer.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Autorenew
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.CircularProgressIndicator
@@ -144,6 +141,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                             panX = 0f
                             panY = 0f
                         } else {
+                            // 屏幕正中心 72dp 的透明判定区：点中即唤出底部页数列表，不绘制任何视觉元素。
                             val cx = size.width / 2f
                             val cy = size.height / 2f
                             val inCenter = offset.x >= cx - centerHalfPx &&
@@ -367,10 +365,6 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                 }
                 }
 
-                // 中心小型正方形：仅作视觉提示（不带 pointerInput，不能挡住下层 Pager / LazyColumn 的滑动）。
-                if (overlay && zoom <= 1f) {
-                    CenterPageVisual()
-                }
                 // 放大后才挂拖动层，避免吃掉了 Pager 的翻页手势。
                 if (zoom > 1f) {
                     Box(
@@ -488,26 +482,6 @@ private fun PageImage(
         // 预加载窗口由 Pager/Lazy 的相邻项组合决定；preload 仅用于潜在的自定义预热。
         @Suppress("UNUSED_EXPRESSION")
         (preload >= 0 && kotlin.math.abs(pager() - index) <= preload)
-    }
-}
-
-/** 阅读页中心小方块的视觉提示。点击判定在 ReaderScreen 根层 onTap 里做，这里不挂 pointerInput，避免挡滑动。 */
-@Composable
-private fun BoxScope.CenterPageVisual() {
-    Box(
-        Modifier
-            .align(Alignment.Center)
-            .size(72.dp)
-            .background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(12.dp)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            Icons.Filled.GridView,
-            contentDescription = "页数列表",
-            tint = Color.White.copy(alpha = 0.75f),
-            modifier = Modifier.size(22.dp),
-        )
     }
 }
 
