@@ -1,5 +1,10 @@
 package com.mangaviewer.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -13,6 +18,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -53,6 +59,28 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
     var checking by remember { mutableStateOf(false) }
     val auth by container.account.auth.collectAsState()
     var syncing by remember { mutableStateOf(false) }
+
+    // 选择自定义下载目录（SAF 目录树），并申请持久化读写权限。
+    val downloadDirLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val granted = runCatching {
+            container.appContext.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+            true
+        }.getOrDefault(false)
+        scope.launch {
+            if (granted) {
+                settingsRepo.setDownloadTree(uri.toString())
+                snackbar.showSnackbar("下载目录已更新，仅影响之后的新下载")
+            } else {
+                snackbar.showSnackbar("没有获得该目录的读写权限，已保持原设置")
+            }
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },
@@ -226,6 +254,40 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
             }
 
             SectionTitle("下载")
+            val customDir = s.downloadTree.isNotBlank()
+            Text("保存位置", style = MaterialTheme.typography.labelMedium)
+            Text(
+                text = if (customDir) "自定义目录：${treeLabel(s.downloadTree)}" else "应用私有目录（默认）",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (!customDir) {
+                Text(
+                    container.downloads.internalDirText(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                "每部漫画在所选目录下建一个以 ID 命名的子文件夹，图片按页号保存；" +
+                    "切换目录只影响之后的新下载，已下载的内容仍可正常阅读；卸载 App 会删除应用私有目录里的内容。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { downloadDirLauncher.launch(null) }) {
+                    Text(if (customDir) "更改下载目录" else "选择下载目录")
+                }
+                if (customDir) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                settingsRepo.setDownloadTree("")
+                                snackbar.showSnackbar("已恢复默认下载目录")
+                            }
+                        },
+                    ) { Text("恢复默认") }
+                }
+            }
             Text("并发下载：${s.concurrentDownloads}", style = MaterialTheme.typography.labelMedium)
             Slider(
                 value = s.concurrentDownloads.toFloat(),
@@ -253,6 +315,13 @@ private fun SectionTitle(text: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 12.dp),
     )
+}
+
+/** 把 SAF tree URI 转成用户能看懂的路径，如 primary:Download/NhViwer -> Download/NhViwer。 */
+private fun treeLabel(raw: String): String {
+    val id = runCatching { DocumentsContract.getTreeDocumentId(Uri.parse(raw)) }.getOrNull().orEmpty()
+    val rel = id.substringAfter(':', id)
+    return if (rel.isBlank() || rel == "/") "存储根目录" else rel
 }
 
 private fun layoutLabel(layout: ReaderLayout): String = when (layout) {

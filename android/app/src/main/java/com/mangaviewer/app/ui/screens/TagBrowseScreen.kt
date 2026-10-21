@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -43,19 +42,13 @@ import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.ErrorBox
 import com.mangaviewer.app.ui.components.LoadingBox
 
-/** 和 nhentai 网站一致的 tag 类型。 */
-private val BROWSE_TYPES = listOf(
-    "tag" to "标签",
-    "artist" to "作者",
-    "parody" to "原作",
-    "character" to "角色",
-    "group" to "社团",
-)
+/** 分类页只展示标签，其余类型都走同一个 tag 检索接口。 */
+private const val TYPE_TAG = "tag"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TagBrowseScreen(container: AppContainer, navController: NavController) {
-    var type by remember { mutableStateOf("tag") }
+    // 只保留「标签」：作者/原作/角色/社团这些分类实际都走 tag 接口，展示出来只会让人误以为有效。
     // 默认选 A
     var letter by remember { mutableStateOf("A") }
     var tagList by remember { mutableStateOf<List<TagUi>>(emptyList()) }
@@ -64,13 +57,13 @@ fun TagBrowseScreen(container: AppContainer, navController: NavController) {
     var total by remember { mutableStateOf(0) }
     var reloadKey by remember { mutableStateOf(0) }
 
-    LaunchedEffect(type, letter, reloadKey) {
+    LaunchedEffect(letter, reloadKey) {
         loading = true
         error = null
-        tagList = container.tagIndex.cached(type, letter).orEmpty()
+        tagList = container.tagIndex.cached(TYPE_TAG, letter).orEmpty()
         runCatching {
-            val t = container.tagIndex.totalTags(type)
-            val list = container.tagIndex.tagsForLetter(type, letter)
+            val t = container.tagIndex.totalTags(TYPE_TAG)
+            val list = container.tagIndex.tagsForLetter(TYPE_TAG, letter)
             t to list
         }.onSuccess { pair ->
             total = pair.first
@@ -86,19 +79,6 @@ fun TagBrowseScreen(container: AppContainer, navController: NavController) {
         bottomBar = { LetterBar(selected = letter, onSelect = { letter = it }) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(BROWSE_TYPES, key = { it.first }) { entry ->
-                    FilterChip(
-                        selected = type == entry.first,
-                        onClick = { if (type != entry.first) type = entry.first },
-                        label = { Text(entry.second) },
-                    )
-                }
-            }
-
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,

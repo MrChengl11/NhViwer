@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -43,6 +44,10 @@ data class Settings(
      * 直连模式下图片地址不再改写成 /img?url=，而是让 Coil 直接请求原图床域名。
      */
     val directMode: Boolean = false,
+    /** 自定义下载目录的 SAF tree URI（空 = 应用私有目录）。只影响切换之后的新下载。 */
+    val downloadTree: String = "",
+    /** 历史选择过的下载目录（SAF tree URI），用于继续读取旧目录里已下载的内容。 */
+    val downloadTrees: List<String> = emptyList(),
 ) {
     /**
      * 实际的 API 根地址。直连模式固定走官网，反代模式走用户在设置里填的地址。
@@ -84,6 +89,8 @@ class SettingsRepository(private val context: Context) {
         val PAGE_NUMBER = booleanPreferencesKey("show_page_number")
         val FOREGROUND_DOWNLOADS = booleanPreferencesKey("foreground_downloads")
         val DIRECT_MODE = booleanPreferencesKey("direct_mode")
+        val DOWNLOAD_TREE = stringPreferencesKey("download_tree")
+        val DOWNLOAD_TREES = stringSetPreferencesKey("download_trees")
     }
 
     val settingsFlow: Flow<Settings> = context.dataStore.data.map { p ->
@@ -104,6 +111,8 @@ class SettingsRepository(private val context: Context) {
             showPageNumber = p[Keys.PAGE_NUMBER] ?: true,
             foregroundDownloads = p[Keys.FOREGROUND_DOWNLOADS] ?: true,
             directMode = p[Keys.DIRECT_MODE] ?: false,
+            downloadTree = p[Keys.DOWNLOAD_TREE] ?: "",
+            downloadTrees = (p[Keys.DOWNLOAD_TREES] ?: emptySet()).toList(),
         )
     }
 
@@ -125,6 +134,18 @@ class SettingsRepository(private val context: Context) {
 
     /** 切换连接方式：直连 / 本地反代。切换后下一次请求即生效（图片拦截器每次读取）。 */
     suspend fun setDirectMode(value: Boolean) = edit { it[Keys.DIRECT_MODE] = value }
+
+    /**
+     * 设置自定义下载目录（SAF tree URI）；传空字符串恢复应用私有目录。
+     * 选过的目录会记入历史，恢复默认后旧目录里已下载的内容仍然可读。
+     */
+    suspend fun setDownloadTree(value: String) {
+        val v = value.trim()
+        edit { p ->
+            p[Keys.DOWNLOAD_TREE] = v
+            if (v.isNotBlank()) p[Keys.DOWNLOAD_TREES] = (p[Keys.DOWNLOAD_TREES] ?: emptySet()) + v
+        }
+    }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.dataStore.edit(block)

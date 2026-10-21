@@ -8,6 +8,7 @@ import com.mangaviewer.app.data.remote.ApiException
 import com.mangaviewer.app.data.remote.AuthState
 import com.mangaviewer.app.data.remote.NhentaiApi
 import com.mangaviewer.app.data.remote.dto.UserMeDto
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,13 +60,20 @@ class AccountRepository(private val container: AppContainer) {
         _sync.value = SyncState.Idle
     }
 
-    /** 收藏状态变化时把操作推给服务端（登录后才有效）。 */
+    /**
+     * 收藏状态变化时把操作推给服务端（登录后才有效）。
+     *
+     * 成功判定只看「写入请求本身是否抛异常」，不再比较响应里的 favorite 字段：
+     * 服务端不同版本/不同路径的响应体并不总是回显最新状态（也可能是空体），
+     * 旧实现用 result.favorite == favorite 判定，会把实际成功的操作误报成「云端同步失败」。
+     * 写入报错时先退避重试一次，仍失败再查询一次真实状态，只有确认未生效才返回 false。
+     */
     suspend fun pushFavorite(galleryId: Long, favorite: Boolean): Boolean {
         if (!container.authStore.state.value.isLoggedIn) return false
-        return runCatching {
-            val result = api().setFavorite(galleryId, favorite)
-            result.favorite == favorite
-        }.getOrDefault(false)
+        if (runCatching { api().setFavorite(galleryId, favorite) }.isSuccess) return true
+        delay(500)
+        if (runCatching { api().setFavorite(galleryId, favorite) }.isSuccess) return true
+        return runCatching { api().checkFavorite(galleryId).favorite == favorite }.getOrDefault(false)
     }
 
     /**

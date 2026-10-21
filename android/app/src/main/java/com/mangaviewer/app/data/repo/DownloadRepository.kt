@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -42,21 +43,47 @@ class DownloadRepository(private val container: AppContainer) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = HashMap<Long, Job>()
 
+    /** 设置页选择的自定义下载目录（SAF tree URI）；空 = 应用私有目录。 */
+    @Volatile
+    private var customTree: String = ""
+
+    /** 历史上选过的目录，只用于读取（恢复默认后旧下载仍可读）。 */
+    @Volatile
+    private var customTrees: List<String> = emptyList()
+
+    private val storage = DownloadStorage(container.appContext, { customTree }, { customTrees })
+
+    init {
+        // 下载可能早于设置页被调用，先同步读一次当前值，之后跟随设置变化。
+        val initial = runCatching {
+            kotlinx.coroutines.runBlocking { container.settings.settingsFlow.first() }
+        }.getOrNull()
+        customTree = initial?.downloadTree.orEmpty()
+        customTrees = initial?.downloadTrees.orEmpty()
+        scope.launch {
+            container.settings.settingsFlow.collect {
+                customTree = it.downloadTree
+                customTrees = it.downloadTrees
+            }
+        }
+    }
+
     fun observeAll(): Flow<List<DownloadEntity>> = container.downloadDao.observeAll()
 
-    fun rootDir(): File = File(container.appContext.filesDir, "downloads").also { it.mkdirs() }
+    /** 默认下载目录的绝对路径（设置页展示用）。 */
+    fun internalDirText(): String = storage.internalText()
 
-    fun galleryDir(galleryId: Long): File = File(rootDir(), galleryId.toString()).also { it.mkdirs() }
+    /** 自定义下载目录的可读路径；未设置时为 null。 */
+    fun customTreeText(): String? = storage.customTreeText()
 
-    fun pageFile(galleryId: Long, index: Int): File = File(galleryDir(galleryId), fileName(index))
+    fun hasCustomTree(): Boolean = storage.hasCustomTree()
 
-    fun fileName(index: Int): String = "%04d.jpg".format(index)
+    /** 某部漫画本地已有的页面：应用私有目录 + 自定义目录合并，按页号排序。 */
+    fun localPages(galleryId: Long): List<String> = storage.localSources(galleryId)
 
     /** 已下载到本地的页数（用于详情页/下载页展示"已有 N 页"）。 */
-    fun downloadedPages(galleryId: Long): Int = galleryDir(galleryId)
-        .listFiles()
-        ?.count { it.isFile && it.length() > 0L && it.name.endsWith(".jpg") }
-        ?: 0
+    fun downloadedPages(galleryId: Long, total: Int = Int.MAX_VALUE): Int =
+        storage.countExisting(galleryId, total)
 
     suspend fun enqueue(ui: GalleryUi, pagePaths: List<String>) {
         val now = System.currentTimeMillis()
@@ -104,7 +131,7 @@ class DownloadRepository(private val container: AppContainer) {
 
     suspend fun remove(galleryId: Long) {
         jobs.remove(galleryId)?.cancel()
-        withContext(Dispatchers.IO) { galleryDir(galleryId).deleteRecursively() }
+        withContext(Dispatchers.IO) { storage.deleteGallery(galleryId) }
         container.downloadDao.delete(galleryId)
     }
 
@@ -161,17 +188,10 @@ class DownloadRepository(private val container: AppContainer) {
     }
 
     suspend fun cleanupOrphans(validIds: Set<Long>) = withContext(Dispatchers.IO) {
-        rootDir().listFiles()?.forEach { file ->
-            val id = file.name.toLongOrNull()
-            if (id != null && id !in validIds) file.deleteRecursively()
-        }
+        storage.cleanupOrphans(validIds)
     }
 
-    fun countExisting(galleryId: Long, total: Int): Int {
-        var count = 0
-        for (i in 1..total.coerceAtLeast(0)) if (pageFile(galleryId, i).length() > 0L) count++
-        return count
-    }
+    fun countExisting(galleryId: Long, total: Int): Int = storage.countExisting(galleryId, total)
 
     private suspend fun runTask(galleryId: Long) {
         val entity = container.downloadDao.find(galleryId)
@@ -200,9 +220,8 @@ class DownloadRepository(private val container: AppContainer) {
                 paths.forEachIndexed { index, path ->
                     launch {
                         semaphore.withPermit {
-                            val target = pageFile(galleryId, index + 1)
-                            if (target.length() <= 0L) {
-                                if (fetch(path, target)) {
+                            if (!storage.exists(galleryId, index + 1)) {
+                                if (fetch(path, galleryId, index + 1)) {
                                     done.incrementAndGet()
                                 } else {
                                     failed.incrementAndGet()
@@ -230,7 +249,7 @@ class DownloadRepository(private val container: AppContainer) {
                     donePages = finished,
                     status = status,
                     updatedAt = System.currentTimeMillis(),
-                    bytes = directorySize(galleryDir(galleryId)),
+                    bytes = storage.galleryBytes(galleryId),
                     error = message,
                 ),
             )
@@ -290,7 +309,7 @@ class DownloadRepository(private val container: AppContainer) {
         }
     }
 
-    private fun fetch(path: String, target: File): Boolean {
+    private fun fetch(path: String, galleryId: Long, pageIndex: Int): Boolean {
         // base 为 null 表示直连模式：不加 /img?url= 包装，直接请求图床地址。
         val base = proxyBaseOrNull()
         for (candidate in ImageProxyInterceptor.candidates(path, thumb = false)) {
@@ -300,17 +319,10 @@ class DownloadRepository(private val container: AppContainer) {
                 container.client.newCall(request).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body
-                    target.parentFile?.mkdirs()
-                    val temp = File(target.parentFile, target.name + ".part")
-                    body.byteStream().use { input ->
-                        temp.outputStream().use { out -> input.copyTo(out) }
+                    val saved = body.byteStream().use { input ->
+                        storage.writePage(galleryId, pageIndex, input)
                     }
-                    if (temp.length() > 0L) {
-                        if (target.exists()) target.delete()
-                        temp.renameTo(target)
-                        return true
-                    }
-                    temp.delete()
+                    if (saved) return true
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -329,8 +341,6 @@ class DownloadRepository(private val container: AppContainer) {
 
     private fun proxyUrl(base: String, remote: String): String =
         base.trimEnd('/') + "/img?url=" + java.net.URLEncoder.encode(remote, "UTF-8")
-
-    private fun directorySize(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
     private fun encodePaths(paths: List<String>): String {
         val array = JSONArray()

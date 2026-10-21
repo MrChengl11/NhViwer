@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,9 +52,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.local.ImageQuality
 import com.mangaviewer.app.data.local.ReaderLayout
@@ -83,6 +86,9 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
     val scope = rememberCoroutineScope()
     // 底部页数列表的显隐；阅读页中心的小正方形点击后唤出。
     var pagePickerOpen by remember { mutableStateOf(false) }
+    // 「刷新当前页」：refreshTarget 记录被点名的页，refreshNonce 变化时强制该页重新请求图片。
+    var refreshTarget by remember { mutableIntStateOf(-1) }
+    var refreshNonce by remember { mutableIntStateOf(0) }
     // 各布局把自己的翻页 / 跳页 / 当前页动作注册到这里，由统一手势层和页数列表调用。
     val stepRef = remember {
         object {
@@ -94,11 +100,12 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
 
     LaunchedEffect(galleryId) {
         error = null
-        // 优先离线：本地已下载的目录直接用文件
-        val localDir = container.downloads.galleryDir(galleryId)
-        val localFiles = localDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jpg") }?.sortedBy { it.name }
-        if (!localFiles.isNullOrEmpty()) {
-            paths = localFiles.map { it.absolutePath }
+        // 优先离线：已下载的页面直接用本地文件 / 自定义目录里的 content:// URI。
+        val localPages = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            container.downloads.localPages(galleryId)
+        }
+        if (localPages.isNotEmpty()) {
+            paths = localPages
             title = title.ifBlank { "本地阅读" }
             return@LaunchedEffect
         }
@@ -116,6 +123,8 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
     // 只有真正的“点击”才在这里处理。旧实现把 detectTapGestures 放在内容之上的全屏子 Box，
     // 命中测试会挡住下层，滑动全被当成点击（连续滚动布局完全滑不动）。
     val reverse = settings.readerRtl
+    // 只有被点名的页随 refreshNonce 重建请求，其余页保持原状，避免整屏重新下载。
+    val refreshKeyFor: (Int) -> Int = { index -> if (index == refreshTarget) refreshNonce else 0 }
     Box(
         Modifier
             .fillMaxSize()
@@ -211,8 +220,9 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                         path = list[first],
                                         container = container,
                                         quality = settings.imageQuality,
-                                        isLocal = list[first].startsWith("/"),
+                                        isLocal = isLocalPath(list[first]),
                                         preload = settings.preloadCount,
+                                        refreshKey = refreshKeyFor(first),
                                         index = first,
                                         total = list.size,
                                         pager = { pagerState.currentPage * 2 },
@@ -224,8 +234,9 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                             path = list[first + 1],
                                             container = container,
                                             quality = settings.imageQuality,
-                                            isLocal = list[first + 1].startsWith("/"),
+                                            isLocal = isLocalPath(list[first + 1]),
                                             preload = settings.preloadCount,
+                                            refreshKey = refreshKeyFor(first + 1),
                                             index = first + 1,
                                             total = list.size,
                                             pager = { pagerState.currentPage * 2 },
@@ -273,8 +284,9 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                     path = list[page],
                                     container = container,
                                     quality = settings.imageQuality,
-                                    isLocal = list[page].startsWith("/"),
+                                    isLocal = isLocalPath(list[page]),
                                     preload = settings.preloadCount,
+                                    refreshKey = refreshKeyFor(page),
                                     index = page,
                                     total = list.size,
                                     pager = { pagerState.currentPage },
@@ -312,8 +324,9 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                 path = list[page],
                                 container = container,
                                 quality = settings.imageQuality,
-                                isLocal = list[page].startsWith("/"),
+                                isLocal = isLocalPath(list[page]),
                                 preload = settings.preloadCount,
+                                refreshKey = refreshKeyFor(page),
                                 index = page,
                                 total = list.size,
                                 pager = { pagerState.currentPage },
@@ -349,8 +362,9 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                     path = path,
                                     container = container,
                                     quality = settings.imageQuality,
-                                    isLocal = path.startsWith("/"),
+                                    isLocal = isLocalPath(path),
                                     preload = settings.preloadCount,
+                                    refreshKey = refreshKeyFor(index),
                                     index = index,
                                     total = list.size,
                                     pager = { state.firstVisibleItemIndex },
@@ -419,6 +433,14 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                         tint = Color.White,
                     )
                 }
+                // 刷新当前页：只让当前页重新请求图片（失败重试 / 图片更新），其余页不受影响。
+                IconButton(onClick = {
+                    refreshTarget = stepRef.current()
+                    refreshNonce++
+                }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "刷新当前页", tint = Color.White)
+                }
+                // 换排版单独一个按钮：按 双页 → 横滑 → 竖滑 → 连续 循环切换。
                 IconButton(onClick = {
                     val next = when (settings.readerLayout) {
                         ReaderLayout.PAGED_HORIZONTAL -> ReaderLayout.PAGED_DOUBLE
@@ -448,6 +470,10 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
     }
 }
 
+/** 本地页面：应用私有目录的绝对路径，或自定义下载目录的 content:// URI。 */
+private fun isLocalPath(path: String): Boolean =
+    path.startsWith("/") || path.startsWith("content://")
+
 @Composable
 private fun PageImage(
     path: String,
@@ -458,27 +484,53 @@ private fun PageImage(
     index: Int,
     total: Int,
     pager: () -> Int,
+    refreshKey: Int = 0,
 ) {
     // 在线页有多个图床候选：i* 在本机常年 520，失败时自动换到 t*，避免整屏黑。
-    val candidates = remember(path, isLocal, quality) {
+    // refreshKey 变化时重建候选与失败计数，让「刷新当前页」从第一个图床重新开始。
+    val candidates = remember(path, isLocal, quality, refreshKey) {
         if (isLocal) listOf<String>(path)
         else ImageProxyInterceptor.viewerCandidates(path) { x -> x + quality.query }
     }
-    var hostIndex by remember(path) { mutableIntStateOf(0) }
+    var hostIndex by remember(path, refreshKey) { mutableIntStateOf(0) }
     val model = remember(candidates, hostIndex, isLocal) {
         val current = candidates.getOrNull(hostIndex.coerceIn(0, candidates.lastIndex))
-        if (isLocal) current?.let { File(it) } else current
+        // 本地页可能是应用私有路径（File）或自定义下载目录的 content:// URI（Coil 可直接加载）。
+        if (isLocal) current?.let { if (it.startsWith("content://")) it else File(it) } else current
     }
+    // 刷新时给请求叠加 nonce 缓存键，绕过 Coil 内存/磁盘缓存重新解码或重新下载；
+    // 本地页（私有目录 / content://）只重建解码，不改写来源。
+    val context = LocalContext.current
+    val request = remember(model, refreshKey, hostIndex, isLocal) {
+        if (refreshKey <= 0) {
+            model
+        } else {
+            val token = "$refreshKey-$hostIndex-" + path.hashCode()
+            ImageRequest.Builder(context).data(model).apply {
+                memoryCacheKey("reader-refresh-$token")
+                if (!isLocal) diskCacheKey("reader-refresh-$token")
+            }.build()
+        }
+    }
+    // 刷新时给一个小转圈，否则远程图重新下载期间整屏纯黑，看起来像刷新坏了。
+    var refreshing by remember(refreshKey) { mutableStateOf(refreshKey > 0) }
+    LaunchedEffect(refreshKey) { refreshing = refreshKey > 0 }
     Box(Modifier.fillMaxSize().fillMaxHeight(), contentAlignment = Alignment.Center) {
         AsyncImage(
-            model = model,
+            model = request,
             contentDescription = "第 ${index + 1} 页",
             contentScale = ContentScale.Fit,
+            onLoading = { if (refreshKey > 0) refreshing = true },
+            onSuccess = { refreshing = false },
             onError = {
+                refreshing = false
                 if (!isLocal && hostIndex < candidates.lastIndex) hostIndex++
             },
             modifier = Modifier.fillMaxSize(),
         )
+        if (refreshing) {
+            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp))
+        }
         // 预加载窗口由 Pager/Lazy 的相邻项组合决定；preload 仅用于潜在的自定义预热。
         @Suppress("UNUSED_EXPRESSION")
         (preload >= 0 && kotlin.math.abs(pager() - index) <= preload)
