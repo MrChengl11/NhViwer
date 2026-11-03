@@ -32,7 +32,7 @@ UI 使用 Google **Material Design 3（Expressive：大圆角、动态取色、�
 | 图片 | Coil 3.6.3 | 自定义 Interceptor：直连或走本地反代，多图床后备 |
 | 后台 | 前台服务（DATA_SYNC 类型） | 下载进度常驻通知 |
 
-规模：**40 个 Kotlin 文件 / 6060 行**，debug APK 22.2 MB（22,186,036 字节，v1.0.4）。
+规模：**40 个 Kotlin 文件 / 6100+ 行**，debug APK 22.2 MB（22,186,036 字节，v1.0.5）。
 
 ## 2. 架构总览
 
@@ -63,6 +63,7 @@ app/src/main/java/com/mangaviewer/app/
 
 **浏览**
 - 首页：最新 / 最多收藏 双榜、关键词搜索、热门标签快链；**上滑自动加载下一页（滑到哪儿加载到哪儿，无「加载更多」按钮）**，搜索入口在右上角
+- 搜索页交互：输入框在整个搜索过程中常驻可见（内容即当前关键词）。输入框右侧 **× 只清空输入框与结果并留在搜索页**（自动重新聚焦，可直接输入下一个词），**「取消」或系统返回键才退出搜索**回到首页发现流
 - 分类页：按首字母浏览标签（`#` + A–Z 27 格字母栏），只列「标签」类型
 - 搜索：`tag:xxx`、`artist:xxx`、`language:chinese` 等 nhentai 查询语法，支持分页
 
@@ -126,7 +127,7 @@ targetSdk 37 下 Android 13+ 必须**运行时申请** `POST_NOTIFICATIONS`，�
 
 最新版见 GitHub Releases：<https://github.com/MrChengl11/NhViwer/releases>
 
-- `Nhviwer-1.0.4.apk` — v1.0.4（versionCode 4，debug 签名，22,186,036 字节，sha256 `d98d3f130999438e54359e669d6be6410026d714cd1c93c8395c08d6fa856885`）
+- `Nhviwer-1.0.5.apk` — v1.0.5（versionCode 5，debug 签名，22,186,036 字节，sha256 `82fd8664b8ed5f01b81decdcf9d944d2060ea7e58cca0d97d026fa1d379afa8b`）
 - 客户端不含任何内容、也不内置代理：请在「设置」里选择「直连」（设备已挂代理）或「本地反代」（`node tools/nhentai-proxy.mjs`，默认 `http://127.0.0.1:8787`）
 - 从源码构建：`cd android && ./gradlew :app:assembleDebug`
 
@@ -162,5 +163,7 @@ targetSdk 37 下 Android 13+ 必须**运行时申请** `POST_NOTIFICATIONS`，�
 | 设置页显示 / 选择下载目录 | ✅ MuMu 实机验证（SAF 选 Download/NhViwer 后下载落盘、阅读页读 content:// 正常；恢复默认后旧目录仍可读） |
 | 收藏误报「云端同步失败」修复 | ✅ MuMu + 用户真机验证（加入 / 取消收藏均提示「已同步到账号」） |
 | 阅读页刷新当前页 + 独立换排版按钮 | ✅ MuMu 实机验证（刷新转圈后重载、四布局循环切换保留当前页、中心判定区回归正常） |
+| 搜索页 × 只清空输入框、不退回首页 | ✅ MuMu 实机验证（搜 futanari → 点 × → 停在全屏搜索页「输入关键词后开始搜索」且输入框重新聚焦；再输 swimsuit 提交正常；进详情返回后关键词与结果仍在；「取消」/返回键才回首页发现流） |
+| 搜索页从详情页返回保持关键词 | ✅ MuMu 实机验证（rememberSaveable 保存输入框内容，返回后顶栏仍显示 swimsuit 与搜索结果） |
 
 

@@ -1,5 +1,6 @@
 package com.mangaviewer.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,10 +41,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -60,6 +65,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -88,7 +94,13 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
     /** 加载更多失败时的提示；上一次成功的列表保持不变。 */
     var loadMoreError by mutableStateOf<String?>(null)
         private set
-    /** null = 发现流；非 null = 正在展示该关键词的搜索结果 */
+    /**
+     * 搜索页模式：true 时列表区展示「搜索提示 / 搜索结果」，而不是首页发现流。
+     * 与 [activeQuery] 分开，是为了支持「清空搜索框但留在搜索页」这种中间态。
+     */
+    var searchMode by mutableStateOf(false)
+        private set
+    /** null = 还没提交过关键词；非 null = 正在展示该关键词的搜索结果 */
     var activeQuery by mutableStateOf<String?>(null)
         private set
     var searching by mutableStateOf(false)
@@ -100,10 +112,10 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
     private var job: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private val inSearch: Boolean get() = activeQuery != null
+    private val inSearch: Boolean get() = searchMode
 
     fun ensureLoaded() {
-        if (items.isEmpty() && !loading && error == null) load(reset = true)
+        if (items.isEmpty() && !loading && error == null && !searchMode) load(reset = true)
     }
 
     fun switchFeed(target: Feed) {
@@ -111,19 +123,21 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
         feed = target
         searchError = null
         activeQuery = null
+        searchMode = false
         reload()
     }
 
     fun retry() {
-        if (inSearch) {
+        val q = activeQuery
+        if (q != null) {
             searchError = null
-            activeQuery?.let { search(it) }
-        } else {
+            search(q)
+        } else if (!searchMode) {
             reload()
         }
     }
 
-    /** 滑到列表末尾附近时自动续页（原「加载更多」按钮已移除）。 */
+    /** 滑到列表末尾附近时自动续页（原「加载更多」按钮已移除）。搜索页不分页。 */
     fun loadMore() {
         if (inSearch || endReached || loading) return
         if (loadMoreError != null) return
@@ -156,7 +170,7 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
         job = scope.launch {
             runCatching {
                 when {
-                    inSearch -> container.galleries.search(activeQuery!!, 1, "date")
+                    activeQuery != null -> container.galleries.search(activeQuery!!, 1, "date")
                     feed == Feed.LATEST -> container.galleries.latest(targetPage)
                     else -> container.galleries.popular(targetPage)
                 }
@@ -167,7 +181,7 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
                 val merged = if (reset) list else items + list
                 items = merged.distinctBy { it.id }
                 page = targetPage
-                if (inSearch) {
+                if (activeQuery != null) {
                     endReached = true
                 } else if (list.isEmpty() || list.size < PAGE_SIZE) {
                     endReached = true
@@ -184,17 +198,21 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
         }
     }
 
+    /** 提交搜索：进入搜索页并展示该关键词的结果。 */
     fun search(rawQuery: String) {
         val q = rawQuery.trim()
         if (q.isEmpty()) return
         job?.cancel()
+        searchMode = true
         searching = true
         searchError = null
-        activeQuery = null
+        activeQuery = q
+        items = emptyList()
+        page = 0
+        endReached = false
         job = scope.launch {
             runCatching { container.galleries.search(q, 1, "date") }
                 .onSuccess { list ->
-                    activeQuery = q
                     items = list.distinctBy { it.id }
                     page = 1
                     endReached = true
@@ -204,9 +222,30 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
         }
     }
 
-    fun exitSearch() {
-        searchError = null
+    /**
+     * 清空搜索框：取消在途请求、清空结果，但**留在搜索页**等用户重新输入。
+     * 注意不要退回首页发现流（那是 [exitSearch] 的语义）。
+     */
+    fun clearSearch() {
+        job?.cancel()
+        searchMode = true
         activeQuery = null
+        searchError = null
+        searching = false
+        loading = false
+        loadMoreError = null
+        items = emptyList()
+        page = 0
+        endReached = false
+    }
+
+    /** 退出搜索：回到首页发现流（「取消」按钮 / 系统返回键）。 */
+    fun exitSearch() {
+        job?.cancel()
+        searchError = null
+        searching = false
+        activeQuery = null
+        searchMode = false
         reload()
     }
 
@@ -224,7 +263,8 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
 /**
  * 首页 = 发现流 + 内嵌搜索。
  * 搜索入口放在顶部标题栏（放大镜），展开后是一行输入框；提交后就地切换成搜索结果，
- * 顶部出现「退出搜索」按钮恢复原来的 feed。不再单独占一个底部 Tab。
+ * 输入框保持可见（内容就是当前关键词），点 × 只清空输入框并留在搜索页，
+ * 点「取消」或按系统返回键才回到首页发现流。
  * 上滑直接滚动列表（原来的下拉唤起搜索手势会把上滑吃掉，已移除），滑到末尾自动加载下一页。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -234,21 +274,38 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
     val favorites by container.favorites.observeIds().collectAsState(initial = emptySet())
     val scope = rememberCoroutineScope()
     val gridState = rememberLazyGridState()
+    val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
 
     // ---- 仅 UI 态的搜索框展开状态；查询词与结果由 ViewModel 持有 ----
-    var searchOpen by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    // rememberSaveable：从详情页返回时输入框内容与展开状态还在。
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    // 只有用户主动唤起搜索时才抢焦点弹键盘，从详情页返回时不要弹。
+    var wantFocus by remember { mutableStateOf(false) }
 
-    val inSearch = vm.activeQuery != null
+    // 搜索页（含已清空输入框的空态）也一直显示输入框，这样 × 才是「清空」而不是「退出」。
+    val fieldVisible = searchOpen || vm.searchMode
+    val inSearch = vm.searchMode
 
     LaunchedEffect(Unit) { vm.ensureLoaded() }
+
+    LaunchedEffect(wantFocus) {
+        if (wantFocus) {
+            runCatching {
+                delay(80)
+                focusRequester.requestFocus()
+            }
+            wantFocus = false
+        }
+    }
 
     // 滑到距末尾 4 个条目以内时自动续页；items 增长后 condition 会重新变 false，
     // 因此一次「接近末尾」只会触发一次加载。
     LaunchedEffect(gridState) {
         snapshotFlow {
             val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            vm.activeQuery == null &&
+            !vm.searchMode &&
                 vm.items.isNotEmpty() &&
                 !vm.loading &&
                 !vm.endReached &&
@@ -260,13 +317,31 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
     fun submitSearch() {
         val q = query.trim()
         if (q.isEmpty()) return
-        searchOpen = false
+        searchOpen = true
+        focusManager.clearFocus()
         vm.search(q)
     }
 
+    /** × ：清空输入框与搜索结果，留在搜索页继续输入。 */
+    fun clearSearchBox() {
+        query = ""
+        vm.clearSearch()
+        wantFocus = true
+    }
+
+    /** 「取消」/ 返回键：真正退出搜索，回到首页发现流。 */
+    fun closeSearch() {
+        query = ""
+        searchOpen = false
+        focusManager.clearFocus()
+        if (vm.searchMode) vm.exitSearch()
+    }
+
+    BackHandler(enabled = fieldVisible) { closeSearch() }
+
     Scaffold(
         topBar = {
-            if (searchOpen) {
+            if (fieldVisible) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -274,52 +349,46 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).focusRequester(focusRequester),
                         singleLine = true,
                         placeholder = { Text("搜索标签 / 作者 / 关键词", maxLines = 1) },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        leadingIcon = {
+                            IconButton(onClick = { submitSearch() }) {
+                                Icon(Icons.Filled.Search, contentDescription = "搜索")
+                            }
+                        },
                         trailingIcon = {
                             if (query.isNotEmpty()) {
-                                IconButton(onClick = { query = "" }) {
-                                    Icon(Icons.Filled.Clear, contentDescription = "清空")
+                                IconButton(onClick = { clearSearchBox() }) {
+                                    Icon(Icons.Filled.Clear, contentDescription = "清空搜索框")
                                 }
                             }
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
                     )
-                    IconButton(onClick = { searchOpen = false }) {
-                        Icon(Icons.Filled.Clear, contentDescription = "关闭搜索")
-                    }
+                    TextButton(onClick = { closeSearch() }) { Text("取消") }
                 }
             } else {
                 TopAppBar(
-                    title = {
-                        Text(
-                            if (inSearch) "搜索：${vm.activeQuery.orEmpty()}" else "发现漫画",
-                            maxLines = 1,
-                        )
-                    },
+                    title = { Text("发现漫画", maxLines = 1) },
                     actions = {
-                        if (inSearch) {
-                            IconButton(onClick = { vm.exitSearch() }) {
-                                Icon(Icons.Filled.Clear, contentDescription = "退出搜索")
+                        IconButton(onClick = {
+                            searchOpen = true
+                            wantFocus = true
+                        }) {
+                            Icon(Icons.Filled.Search, contentDescription = "搜索")
+                        }
+                        IconButton(onClick = { navController.navigate("history") }) {
+                            Icon(Icons.Filled.History, contentDescription = "历史")
+                        }
+                        IconButton(onClick = {
+                            scope.launch {
+                                runCatching { container.galleries.random() }
+                                    .onSuccess { navController.navigate("detail/${it.id}") }
                             }
-                        } else {
-                            IconButton(onClick = { searchOpen = true }) {
-                                Icon(Icons.Filled.Search, contentDescription = "搜索")
-                            }
-                            IconButton(onClick = { navController.navigate("history") }) {
-                                Icon(Icons.Filled.History, contentDescription = "历史")
-                            }
-                            IconButton(onClick = {
-                                scope.launch {
-                                    runCatching { container.galleries.random() }
-                                        .onSuccess { navController.navigate("detail/${it.id}") }
-                                }
-                            }) {
-                                Icon(Icons.Filled.Casino, contentDescription = "随机")
-                            }
+                        }) {
+                            Icon(Icons.Filled.Casino, contentDescription = "随机")
                         }
                     },
                 )
@@ -327,7 +396,7 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (!inSearch && !searchOpen) {
+            if (!inSearch && !fieldVisible) {
                 TabRow(selectedTabIndex = vm.feed.ordinal) {
                     Feed.entries.forEach { f ->
                         Tab(
@@ -341,6 +410,7 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
             when {
                 vm.searching -> LoadingBox()
                 vm.searchError != null -> ErrorBox(vm.searchError!!, onRetry = { vm.retry() })
+                inSearch && vm.activeQuery == null -> EmptyBox("输入关键词后开始搜索")
                 vm.items.isEmpty() && vm.loading -> LoadingBox()
                 vm.items.isEmpty() && vm.error != null -> ErrorBox(vm.error!!, onRetry = { vm.retry() })
                 vm.items.isEmpty() && inSearch -> EmptyBox("没有找到「${vm.activeQuery.orEmpty()}」，试试别的关键词")
