@@ -46,6 +46,18 @@ import com.mangaviewer.app.data.db.DEFAULT_FOLDER
 import com.mangaviewer.app.data.db.FavoriteEntity
 import com.mangaviewer.app.data.model.GalleryUi
 import com.mangaviewer.app.download.DownloadService
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.UiStrings
+import com.mangaviewer.app.i18n.allCount
+import com.mangaviewer.app.i18n.bulkFailed
+import com.mangaviewer.app.i18n.bulkMixed
+import com.mangaviewer.app.i18n.bulkOk
+import com.mangaviewer.app.i18n.confirmRemove
+import com.mangaviewer.app.i18n.favoritesTitle
+import com.mangaviewer.app.i18n.removedCount
+import com.mangaviewer.app.i18n.selectedCount
+import com.mangaviewer.app.i18n.syncDone
+import com.mangaviewer.app.i18n.syncPushFailed
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.GalleryCard
 import kotlinx.coroutines.launch
@@ -68,6 +80,7 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
     var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val s = LocalStrings.current
 
     val shown = if (folder == ALL_FOLDER) favorites else favorites.filter { it.folder == folder }
     val selectedEntries = favorites.filter { it.galleryId in selection }
@@ -106,9 +119,9 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
             selection = emptySet()
             snackbar.showSnackbar(
                 when {
-                    ok == 0 -> "加入下载队列失败（$failed 本）"
-                    failed == 0 -> "已加入下载队列：$ok 本"
-                    else -> "已加入 $ok 本，$failed 本失败"
+                    ok == 0 -> s.bulkFailed(failed)
+                    failed == 0 -> s.bulkOk(ok)
+                    else -> s.bulkMixed(ok, failed)
                 },
             )
         }
@@ -120,11 +133,11 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
                 navigationIcon = {
                     if (selecting) {
                         IconButton(onClick = { selection = emptySet() }) {
-                            Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                            Icon(Icons.Filled.Close, contentDescription = s.favorites.exitSelection)
                         }
                     }
                 },
-                title = { Text(if (selecting) "已选 ${selectedEntries.size}" else "收藏（${favorites.size}）") },
+                title = { Text(if (selecting) s.selectedCount(selectedEntries.size) else s.favoritesTitle(favorites.size)) },
                 actions = {
                     if (auth.isLoggedIn) {
                         IconButton(
@@ -135,26 +148,26 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
                                     runCatching { container.account.syncFavorites() }
                                         .onSuccess { r ->
                                             snackbar.showSnackbar(
-                                                "同步完成：拉取 ${r.pulled} 条，推送 ${r.pushed} 条" +
-                                                    if (r.failedPush > 0) "（${r.failedPush} 条推送失败）" else "",
+                                                s.syncDone(r.pulled, r.pushed) +
+                                                    if (r.failedPush > 0) s.syncPushFailed(r.failedPush) else "",
                                             )
                                         }
-                                        .onFailure { snackbar.showSnackbar(it.message ?: "同步失败") }
+                                        .onFailure { snackbar.showSnackbar(it.message ?: s.account.syncFailed) }
                                     syncing = false
                                 }
                             },
-                        ) { Icon(Icons.Filled.Sync, contentDescription = "同步账号收藏") }
+                        ) { Icon(Icons.Filled.Sync, contentDescription = s.account.syncFavorites) }
                     }
                     IconButton(
                         enabled = selecting && !downloading,
                         onClick = { downloadSelected() },
-                    ) { Icon(Icons.Filled.Download, contentDescription = "下载选中") }
+                    ) { Icon(Icons.Filled.Download, contentDescription = s.favorites.bulkDownloadSelected) }
                     IconButton(
                         enabled = selecting,
                         onClick = { confirmDelete = true },
-                    ) { Icon(Icons.Filled.Delete, contentDescription = "删除选中") }
+                    ) { Icon(Icons.Filled.Delete, contentDescription = s.favorites.bulkDeleteSelected) }
                     IconButton(onClick = { navController.navigate("login") }) {
-                        Icon(Icons.Filled.AccountCircle, contentDescription = if (auth.isLoggedIn) "账号" else "登录")
+                        Icon(Icons.Filled.AccountCircle, contentDescription = if (auth.isLoggedIn) s.account.title else s.account.login)
                     }
                 },
             )
@@ -174,7 +187,7 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
                             folder = ALL_FOLDER
                             selection = emptySet()
                         },
-                        label = { Text("全部 ${favorites.size}") },
+                        label = { Text(s.allCount(favorites.size)) },
                     )
                 }
                 itemsIndexed(counts.keys.sorted()) { _, key ->
@@ -185,12 +198,12 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
                             selection = emptySet()
                         },
                         leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
-                        label = { Text("${folderLabel(key)} ${counts[key] ?: 0}") },
+                        label = { Text("${folderLabel(key, s)} ${counts[key] ?: 0}") },
                     )
                 }
             }
             if (shown.isEmpty()) {
-                EmptyBox("还没有收藏，去详情页点心形")
+                EmptyBox(s.favorites.empty)
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(140.dp),
@@ -220,7 +233,7 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
         if (targets.isNotEmpty()) {
             AlertDialog(
                 onDismissRequest = { confirmDelete = false },
-                title = { Text("取消收藏 ${targets.size} 本？") },
+                title = { Text(s.confirmRemove(targets.size)) },
                 text = {
                     Text(
                         buildString {
@@ -240,11 +253,11 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
                                 // 登录后同步删除到云端，失败不阻断本地操作
                                 runCatching { container.account.pushFavorite(id, false) }
                             }
-                            snackbar.showSnackbar("已取消收藏 ${ids.size} 本")
+                            snackbar.showSnackbar(s.removedCount(ids.size))
                         }
-                    }) { Text("删除") }
+                    }) { Text(s.common.delete) }
                 },
-                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
+                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(s.common.cancel) } },
             )
         } else {
             confirmDelete = false
@@ -252,7 +265,7 @@ fun FavoritesScreen(container: AppContainer, navController: NavController) {
     }
 }
 
-private fun folderLabel(key: String): String = if (key == DEFAULT_FOLDER) "默认" else key
+private fun folderLabel(key: String, s: UiStrings): String = if (key == DEFAULT_FOLDER) s.favorites.defaultLabel else key
 
 private fun FavoriteEntity.toUi(): GalleryUi = GalleryUi(
     id = galleryId,

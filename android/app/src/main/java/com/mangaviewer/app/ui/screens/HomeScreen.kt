@@ -56,6 +56,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.model.GalleryUi
+import com.mangaviewer.app.i18n.AppLocale
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.noResultFor
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.ErrorBox
 import com.mangaviewer.app.ui.components.GalleryCard
@@ -70,9 +73,9 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-internal enum class Feed(val label: String) {
-    LATEST("最新"),
-    POPULAR("最多收藏"),
+internal enum class Feed {
+    LATEST,
+    POPULAR,
 }
 
 /**
@@ -191,7 +194,7 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
                     if (!reset && items.size == before) load(false)
                 }
             }.onFailure {
-                val msg = it.message ?: "加载失败"
+                val msg = it.message ?: AppLocale.strings().common.loadFailed
                 if (reset || items.isEmpty()) error = msg else loadMoreError = msg
             }
             loading = false
@@ -217,7 +220,7 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
                     page = 1
                     endReached = true
                 }
-                .onFailure { searchError = it.message ?: "搜索失败" }
+                .onFailure { searchError = it.message ?: AppLocale.strings().home.searchFailed }
             searching = false
         }
     }
@@ -271,6 +274,7 @@ internal class HomeViewModel(private val container: AppContainer) : ViewModel() 
 @Composable
 fun HomeScreen(container: AppContainer, navController: NavController) {
     val vm: HomeViewModel = viewModel { HomeViewModel(container) }
+    val s = LocalStrings.current
     val favorites by container.favorites.observeIds().collectAsState(initial = emptySet())
     val scope = rememberCoroutineScope()
     val gridState = rememberLazyGridState()
@@ -351,36 +355,36 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
                         onValueChange = { query = it },
                         modifier = Modifier.weight(1f).focusRequester(focusRequester),
                         singleLine = true,
-                        placeholder = { Text("搜索标签 / 作者 / 关键词", maxLines = 1) },
+                        placeholder = { Text(s.home.searchHint, maxLines = 1) },
                         leadingIcon = {
                             IconButton(onClick = { submitSearch() }) {
-                                Icon(Icons.Filled.Search, contentDescription = "搜索")
+                                Icon(Icons.Filled.Search, contentDescription = s.home.search)
                             }
                         },
                         trailingIcon = {
                             if (query.isNotEmpty()) {
                                 IconButton(onClick = { clearSearchBox() }) {
-                                    Icon(Icons.Filled.Clear, contentDescription = "清空搜索框")
+                                    Icon(Icons.Filled.Clear, contentDescription = s.home.clearSearch)
                                 }
                             }
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
                     )
-                    TextButton(onClick = { closeSearch() }) { Text("取消") }
+                    TextButton(onClick = { closeSearch() }) { Text(s.common.cancel) }
                 }
             } else {
                 TopAppBar(
-                    title = { Text("发现漫画", maxLines = 1) },
+                    title = { Text(s.home.discover, maxLines = 1) },
                     actions = {
                         IconButton(onClick = {
                             searchOpen = true
                             wantFocus = true
                         }) {
-                            Icon(Icons.Filled.Search, contentDescription = "搜索")
+                            Icon(Icons.Filled.Search, contentDescription = s.home.search)
                         }
                         IconButton(onClick = { navController.navigate("history") }) {
-                            Icon(Icons.Filled.History, contentDescription = "历史")
+                            Icon(Icons.Filled.History, contentDescription = s.home.history)
                         }
                         IconButton(onClick = {
                             scope.launch {
@@ -388,7 +392,7 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
                                     .onSuccess { navController.navigate("detail/${it.id}") }
                             }
                         }) {
-                            Icon(Icons.Filled.Casino, contentDescription = "随机")
+                            Icon(Icons.Filled.Casino, contentDescription = s.home.random)
                         }
                     },
                 )
@@ -402,7 +406,7 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
                         Tab(
                             selected = vm.feed == f,
                             onClick = { vm.switchFeed(f) },
-                            text = { Text(f.label) },
+                            text = { Text(if (f == Feed.LATEST) s.home.latest else s.home.mostFavorites) },
                         )
                     }
                 }
@@ -410,11 +414,11 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
             when {
                 vm.searching -> LoadingBox()
                 vm.searchError != null -> ErrorBox(vm.searchError!!, onRetry = { vm.retry() })
-                inSearch && vm.activeQuery == null -> EmptyBox("输入关键词后开始搜索")
+                inSearch && vm.activeQuery == null -> EmptyBox(s.home.enterKeyword)
                 vm.items.isEmpty() && vm.loading -> LoadingBox()
                 vm.items.isEmpty() && vm.error != null -> ErrorBox(vm.error!!, onRetry = { vm.retry() })
-                vm.items.isEmpty() && inSearch -> EmptyBox("没有找到「${vm.activeQuery.orEmpty()}」，试试别的关键词")
-                vm.items.isEmpty() -> EmptyBox("暂无内容，确认反代服务已启动")
+                vm.items.isEmpty() && inSearch -> EmptyBox(s.noResultFor(vm.activeQuery.orEmpty()))
+                vm.items.isEmpty() -> EmptyBox(s.home.noContent)
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(140.dp),
                     state = gridState,
@@ -442,15 +446,15 @@ fun HomeScreen(container: AppContainer, navController: NavController) {
                                         strokeWidth = 2.dp,
                                     )
                                     vm.loadMoreError != null -> TextButton(onClick = { vm.retryLoadMore() }) {
-                                        Text("加载失败，点击重试")
+                                        Text(s.common.loadFailedTapRetry)
                                     }
                                     vm.endReached -> Text(
-                                        "已经到底了",
+                                        s.common.endOfList,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         style = MaterialTheme.typography.labelMedium,
                                     )
                                     else -> Text(
-                                        "上滑继续加载",
+                                        s.common.swipeUpLoadMore,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         style = MaterialTheme.typography.labelMedium,
                                     )

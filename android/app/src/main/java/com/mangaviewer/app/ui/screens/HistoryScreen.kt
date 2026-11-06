@@ -30,6 +30,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.mangaviewer.app.data.AppContainer
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.historyProgress
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.GalleryThumb
 import kotlinx.coroutines.launch
@@ -43,23 +45,24 @@ fun HistoryScreen(container: AppContainer, navController: NavController) {
     val records by container.history.observeRecent(200).collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val fmt = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+    val s = LocalStrings.current
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("阅读历史") },
+                title = { Text(s.history.title) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.common.back)
                     }
                 },
-                actions = { TextButton(onClick = { scope.launch { container.history.clear() } }) { Text("清空") } },
+                actions = { TextButton(onClick = { scope.launch { container.history.clear() } }) { Text(s.history.clear) } },
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (records.isEmpty()) {
-                EmptyBox("还没有阅读记录")
+                EmptyBox(s.history.empty)
             } else {
                 LazyColumn(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
@@ -77,14 +80,14 @@ fun HistoryScreen(container: AppContainer, navController: NavController) {
                             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                                 Text(record.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
                                 Text(
-                                    "看到第 ${record.lastPage + 1}/${record.numPages} 页 · ${fmt.format(Date(record.updatedAt))}",
+                                    s.historyProgress(record.lastPage + 1, record.numPages, fmt.format(Date(record.updatedAt))),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             TextButton(onClick = {
                                 navController.navigate("reader/${record.galleryId}?page=${record.lastPage + 1}")
-                            }) { Text("继续") }
+                            }) { Text(s.history.resume) }
                         }
                     }
                 }

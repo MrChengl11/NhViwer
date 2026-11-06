@@ -1,4 +1,7 @@
 package com.mangaviewer.app.data.repo
+import com.mangaviewer.app.i18n.AppLocale
+import com.mangaviewer.app.i18n.failedPages
+
 
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_DONE
@@ -204,7 +207,7 @@ class DownloadRepository(private val container: AppContainer) {
             container.downloadDao.upsert(
                 entity.copy(
                     status = DOWNLOAD_STATUS_FAILED,
-                    error = "页面列表为空",
+                    error = AppLocale.strings().messages.pageListEmpty,
                     updatedAt = System.currentTimeMillis(),
                 ),
             )
@@ -242,7 +245,7 @@ class DownloadRepository(private val container: AppContainer) {
             }
             val message = when {
                 failed.get() == 0 -> null
-                else -> "${failed.get()} 页下载失败，可点继续重试"
+                else -> AppLocale.strings().failedPages(failed.get())
             }
             container.downloadDao.upsert(
                 entity.copy(
@@ -262,7 +265,7 @@ class DownloadRepository(private val container: AppContainer) {
                     donePages = done.get(),
                     status = DOWNLOAD_STATUS_FAILED,
                     updatedAt = System.currentTimeMillis(),
-                    error = e.message ?: "下载失败",
+                    error = e.message ?: AppLocale.strings().messages.downloadFailed,
                 ),
             )
         } finally {
@@ -357,11 +360,11 @@ class DownloadRepository(private val container: AppContainer) {
         private const val INTERVAL_MS = 400L
 
         fun statusLabel(status: String): String = when (status) {
-            DOWNLOAD_STATUS_QUEUED -> "排队中"
-            DOWNLOAD_STATUS_RUNNING -> "下载中"
-            DOWNLOAD_STATUS_PAUSED -> "已暂停"
-            DOWNLOAD_STATUS_DONE -> "已完成"
-            DOWNLOAD_STATUS_FAILED -> "失败"
+            DOWNLOAD_STATUS_QUEUED -> AppLocale.strings().messages.statusQueued
+            DOWNLOAD_STATUS_RUNNING -> AppLocale.strings().messages.statusRunning
+            DOWNLOAD_STATUS_PAUSED -> AppLocale.strings().messages.statusPaused
+            DOWNLOAD_STATUS_DONE -> AppLocale.strings().messages.statusDone
+            DOWNLOAD_STATUS_FAILED -> AppLocale.strings().messages.statusFailed
             else -> status
         }
     }

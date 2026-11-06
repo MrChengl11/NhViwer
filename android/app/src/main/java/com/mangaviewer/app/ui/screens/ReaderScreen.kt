@@ -62,6 +62,9 @@ import com.mangaviewer.app.data.local.ImageQuality
 import com.mangaviewer.app.data.local.ReaderLayout
 import com.mangaviewer.app.data.model.GalleryUi
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.pageN
+import com.mangaviewer.app.i18n.pageOfTotal
 import com.mangaviewer.app.ui.components.ErrorBox
 import com.mangaviewer.app.ui.components.LoadingBox
 import kotlinx.coroutines.delay
@@ -71,6 +74,7 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, navController: NavController) {
+    val s = LocalStrings.current
     val settingsState by container.settings.settingsFlow.collectAsState(initial = null)
     val settings = settingsState ?: return
     var paths by remember { mutableStateOf<List<String>?>(null) }
@@ -106,7 +110,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
         }
         if (localPages.isNotEmpty()) {
             paths = localPages
-            title = title.ifBlank { "本地阅读" }
+            title = title.ifBlank { s.reader.localReading }
             return@LaunchedEffect
         }
         runCatching { container.galleries.detail(galleryId) }
@@ -116,7 +120,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                 galleryUi = d.ui
                 runCatching { container.history.record(d.ui, initialPage - 1, d.pages.size) }
             }
-            .onFailure { error = it.message ?: "加载失败" }
+            .onFailure { error = it.message ?: s.common.loadFailed }
     }
 
     // 手势挂在外层 Box（父级）：子级 Pager / LazyColumn 先拿到事件，拖动交给它们滚动；
@@ -173,7 +177,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
         when {
             error != null -> ErrorBox(error!!, onRetry = { scope.launch { error = null; paths = null } })
             list == null -> LoadingBox()
-            list.isEmpty() -> Text("没有页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
+            list.isEmpty() -> Text(s.reader.noPages, color = Color.White, modifier = Modifier.align(Alignment.Center))
             else -> {
                 val start = (initialPage - 1).coerceIn(0, list.lastIndex)
                 val uiSnapshot = galleryUi
@@ -407,7 +411,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = { navController.popBackStack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.common.back, tint = Color.White)
                 }
                 Text(
                     title,
@@ -429,7 +433,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                 }) {
                     Icon(
                         if (zoom > 1f) Icons.Filled.ZoomOut else Icons.Filled.ZoomIn,
-                        contentDescription = if (zoom > 1f) "缩小" else "放大",
+                        contentDescription = if (zoom > 1f) s.reader.zoomOut else s.reader.zoomIn,
                         tint = Color.White,
                     )
                 }
@@ -438,7 +442,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                     refreshTarget = stepRef.current()
                     refreshNonce++
                 }) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "刷新当前页", tint = Color.White)
+                    Icon(Icons.Filled.Refresh, contentDescription = s.reader.refreshPage, tint = Color.White)
                 }
                 // 换排版单独一个按钮：按 双页 → 横滑 → 竖滑 → 连续 循环切换。
                 IconButton(onClick = {
@@ -450,7 +454,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                     }
                     scope.launch { container.settings.setLayout(next) }
                 }) {
-                    Icon(Icons.Filled.Autorenew, contentDescription = "切换布局", tint = Color.White)
+                    Icon(Icons.Filled.Autorenew, contentDescription = s.reader.switchLayout, tint = Color.White)
                 }
             }
         }
@@ -488,6 +492,7 @@ private fun PageImage(
 ) {
     // 在线页有多个图床候选：i* 在本机常年 520，失败时自动换到 t*，避免整屏黑。
     // refreshKey 变化时重建候选与失败计数，让「刷新当前页」从第一个图床重新开始。
+    val s = LocalStrings.current
     val candidates = remember(path, isLocal, quality, refreshKey) {
         if (isLocal) listOf<String>(path)
         else ImageProxyInterceptor.viewerCandidates(path) { x -> x + quality.query }
@@ -518,7 +523,7 @@ private fun PageImage(
     Box(Modifier.fillMaxSize().fillMaxHeight(), contentAlignment = Alignment.Center) {
         AsyncImage(
             model = request,
-            contentDescription = "第 ${index + 1} 页",
+            contentDescription = s.pageN(index + 1),
             contentScale = ContentScale.Fit,
             onLoading = { if (refreshKey > 0) refreshing = true },
             onSuccess = { refreshing = false },
@@ -547,18 +552,19 @@ private fun PagePickerSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        val s = LocalStrings.current
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "跳转到页面",
+                    s.reader.jumpToPage,
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    "共 $total 页 · 当前 ${currentPage + 1}",
+                    s.pageOfTotal(currentPage + 1, total),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

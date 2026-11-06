@@ -1,4 +1,6 @@
 package com.mangaviewer.app.data.repo
+import com.mangaviewer.app.i18n.AppLocale
+
 
 import android.content.Context
 import android.net.Uri
@@ -48,7 +50,7 @@ internal class DownloadStorage(
     fun customTreeText(): String? = treeUri()?.let { tree ->
         val docId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull().orEmpty()
         val rel = docId.substringAfter(':', docId)
-        if (rel.isBlank() || rel == "/") "存储根目录" else rel
+        if (rel.isBlank() || rel == "/") AppLocale.strings().settings.storageRoot else rel
     }
 
     /** 默认目录的绝对路径（给设置页展示）。 */
@@ -166,7 +168,7 @@ internal class DownloadStorage(
         val tree = treeUri()
         if (tree != null) {
             val ok = runCatching {
-                val dir = ensureGalleryDir(tree, galleryId) ?: error("无法创建漫画目录")
+                val dir = ensureGalleryDir(tree, galleryId) ?: error(AppLocale.strings().messages.cannotCreateDir)
                 writeSaf(dir, pageName(index), input)
             }.getOrDefault(false)
             if (ok) return true

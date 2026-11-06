@@ -54,6 +54,8 @@ import com.mangaviewer.app.data.model.groupTags
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
 import com.mangaviewer.app.data.repo.GalleryDetail
 import com.mangaviewer.app.download.DownloadService
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.statsDetail
 import com.mangaviewer.app.ui.components.ErrorBox
 import com.mangaviewer.app.ui.components.GalleryCard
 import com.mangaviewer.app.ui.components.LoadingBox
@@ -71,13 +73,14 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
     val scope = rememberCoroutineScope()
     val settings by container.settings.settingsFlow.collectAsState(initial = null)
     val context = LocalContext.current
+    val s = LocalStrings.current
 
     suspend fun reload() {
         loading = true
         error = null
         runCatching { container.galleries.detail(galleryId) }
             .onSuccess { detail = it; favorite = container.favorites.isFavorite(galleryId) }
-            .onFailure { error = it.message ?: "加载失败" }
+            .onFailure { error = it.message ?: s.common.loadFailed }
         loading = false
     }
 
@@ -87,10 +90,10 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("详情", maxLines = 1) },
+                title = { Text(s.detail.title, maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.common.back)
                     }
                 },
                 actions = {
@@ -103,16 +106,16 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
                             val pushed = runCatching { container.account.pushFavorite(d.ui.id, now) }.getOrDefault(false)
                             snackbar.showSnackbar(
                                 when {
-                                    !container.authStore.state.value.isLoggedIn -> if (now) "已加入收藏（本地）" else "已取消收藏"
-                                    pushed -> if (now) "已加入收藏并同步到账号" else "已取消收藏并同步到账号"
-                                    else -> if (now) "已加入收藏（云端同步失败）" else "已取消收藏（云端同步失败）"
+                                    !container.authStore.state.value.isLoggedIn -> if (now) s.detail.favAddedLocal else s.detail.favRemoved
+                                    pushed -> if (now) s.detail.favAddedSynced else s.detail.favRemovedSynced
+                                    else -> if (now) s.detail.favAddedSyncFailed else s.detail.favRemovedSyncFailed
                                 },
                             )
                         }
                     }) {
                         Icon(
                             if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                            contentDescription = "收藏",
+                            contentDescription = s.detail.favorite,
                             tint = if (favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -150,7 +153,7 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
                                     )
                                 }
                                 Text(
-                                    "${d.ui.numPages} 页 · ${d.ui.numFavorites} 收藏 · ${d.commentCount} 评论",
+                                    s.statsDetail(d.ui.numPages, d.ui.numFavorites, d.commentCount),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(top = 8.dp),
@@ -163,7 +166,7 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
                             Button(
                                 onClick = { navController.navigate("reader/${d.ui.id}?page=1") },
                                 modifier = Modifier.weight(1f),
-                            ) { Text("开始阅读") }
+                            ) { Text(s.detail.startReading) }
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
@@ -171,13 +174,13 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
                                         if (container.settings.current().foregroundDownloads) {
                                             DownloadService.start(context)
                                         }
-                                        snackbar.showSnackbar("已加入下载队列，可在「下载」页查看进度")
+                                        snackbar.showSnackbar(s.detail.queued)
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
                                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Text("下载", modifier = Modifier.padding(start = 6.dp))
+                                Text(s.detail.download, modifier = Modifier.padding(start = 6.dp))
                             }
                         }
                     }
@@ -211,7 +214,7 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
                         item {
                             Column(Modifier.padding(top = 16.dp)) {
                                 Text(
-                                    "相关作品",
+                                    s.detail.related,
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 16.dp),

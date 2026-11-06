@@ -1,4 +1,6 @@
 package com.mangaviewer.app.data.repo
+import com.mangaviewer.app.i18n.AppLocale
+
 
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.db.DEFAULT_FOLDER
@@ -32,7 +34,7 @@ class AccountRepository(private val container: AppContainer) {
     /** 校验一枚还没保存的 API Key，成功后写入登录态。 */
     suspend fun loginWithApiKey(key: String): UserMeDto {
         val trimmed = key.trim()
-        require(trimmed.isNotEmpty()) { "API Key 不能为空" }
+        require(trimmed.isNotEmpty()) { AppLocale.strings().messages.apiKeyEmpty }
         val me = try {
             api().meWithApiKey(trimmed)
         } catch (e: ApiException.Unauthorized) {

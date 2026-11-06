@@ -38,6 +38,10 @@ import androidx.navigation.NavController
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.model.TagUi
 import com.mangaviewer.app.data.repo.TagIndexRepository.Companion.LETTERS
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.loadedOf
+import com.mangaviewer.app.i18n.startsWith
+import com.mangaviewer.app.i18n.worksCount
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.ErrorBox
 import com.mangaviewer.app.ui.components.LoadingBox
@@ -50,6 +54,7 @@ private const val TYPE_TAG = "tag"
 fun TagBrowseScreen(container: AppContainer, navController: NavController) {
     // 只保留「标签」：作者/原作/角色/社团这些分类实际都走 tag 接口，展示出来只会让人误以为有效。
     // 默认选 A
+    val s = LocalStrings.current
     var letter by remember { mutableStateOf("A") }
     var tagList by remember { mutableStateOf<List<TagUi>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -69,13 +74,13 @@ fun TagBrowseScreen(container: AppContainer, navController: NavController) {
             total = pair.first
             tagList = pair.second
         }.onFailure {
-            error = it.message ?: "加载失败"
+            error = it.message ?: s.common.loadFailed
         }
         loading = false
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("分类") }) },
+        topBar = { TopAppBar(title = { Text(s.tagBrowse.title) }) },
         bottomBar = { LetterBar(selected = letter, onSelect = { letter = it }) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -84,12 +89,12 @@ fun TagBrowseScreen(container: AppContainer, navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (letter == "#") "数字 / 符号" else "$letter 开头",
+                    text = if (letter == "#") s.tagBrowse.digits else s.startsWith(letter),
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Box(Modifier.weight(1f))
                 Text(
-                    text = if (loading && tagList.isEmpty()) "加载中…" else "${tagList.size} 个 · 共 $total 个",
+                    text = if (loading && tagList.isEmpty()) s.common.loading else s.loadedOf(tagList.size, total),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -98,7 +103,7 @@ fun TagBrowseScreen(container: AppContainer, navController: NavController) {
             when {
                 tagList.isEmpty() && loading -> LoadingBox()
                 tagList.isEmpty() && error != null -> ErrorBox(error!!, onRetry = { reloadKey += 1 })
-                tagList.isEmpty() -> EmptyBox("该字母下暂无标签")
+                tagList.isEmpty() -> EmptyBox(s.tagBrowse.empty)
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(150.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
@@ -119,6 +124,7 @@ fun TagBrowseScreen(container: AppContainer, navController: NavController) {
 
 @Composable
 private fun TagCell(tag: TagUi, onClick: () -> Unit) {
+    val s = LocalStrings.current
     AssistChip(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -133,7 +139,7 @@ private fun TagCell(tag: TagUi, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${tag.count} 部",
+                    text = tag.count?.let { s.worksCount(it) } ?: "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

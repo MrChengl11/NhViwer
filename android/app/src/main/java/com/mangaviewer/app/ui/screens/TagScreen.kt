@@ -41,6 +41,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.model.GalleryUi
+import com.mangaviewer.app.i18n.AppLocale
+import com.mangaviewer.app.i18n.LocalStrings
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.ErrorBox
 import com.mangaviewer.app.ui.components.GalleryCard
@@ -53,7 +55,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-private val SORTS = listOf("date" to "最新", "popular" to "热门")
+private val SORTS = listOf("date", "popular")
 
 /**
  * Tag 详情列表状态放在 ViewModel 里，从详情页返回时列表不会丢；
@@ -136,7 +138,7 @@ internal class TagViewModel(
                     if (!reset && items.size == before) load(false)
                 }
                 .onFailure {
-                    val msg = it.message ?: "加载失败"
+                    val msg = it.message ?: AppLocale.strings().common.loadFailed
                     if (reset || items.isEmpty()) error = msg else loadMoreError = msg
                 }
             loading = false
@@ -164,6 +166,7 @@ fun TagScreen(
     navController: NavController,
 ) {
     val vm: TagViewModel = viewModel(key = "tag_$tagId") { TagViewModel(container, tagId) }
+    val s = LocalStrings.current
     val gridState = rememberLazyGridState()
     val favorites by container.favorites.observeIds().collectAsState(initial = emptySet())
 
@@ -187,7 +190,7 @@ fun TagScreen(
                 title = { Text(if (tagName.isBlank()) "#$tagId" else tagName, maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.common.back)
                     }
                 },
             )
@@ -198,18 +201,18 @@ fun TagScreen(
                 Modifier.fillMaxWidth().padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                SORTS.forEach { (value, label) ->
+                SORTS.forEach { value ->
                     FilterChip(
                         selected = vm.sort == value,
                         onClick = { vm.changeSort(value) },
-                        label = { Text(label) },
+                        label = { Text(if (value == "date") s.tag.latest else s.tag.popular) },
                     )
                 }
             }
             when {
                 vm.items.isEmpty() && vm.loading -> LoadingBox()
                 vm.items.isEmpty() && vm.error != null -> ErrorBox(vm.error!!, onRetry = { vm.retry() })
-                vm.items.isEmpty() -> EmptyBox("没有结果")
+                vm.items.isEmpty() -> EmptyBox(s.common.noResults)
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(140.dp),
                     state = gridState,
@@ -236,15 +239,15 @@ fun TagScreen(
                                     strokeWidth = 2.dp,
                                 )
                                 vm.loadMoreError != null -> TextButton(onClick = { vm.retryLoadMore() }) {
-                                    Text("加载失败，点击重试")
+                                    Text(s.common.loadFailedTapRetry)
                                 }
                                 vm.endReached -> Text(
-                                    "已经到底了",
+                                    s.common.endOfList,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.labelMedium,
                                 )
                                 else -> Text(
-                                    "上滑继续加载",
+                                    s.common.swipeUpLoadMore,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.labelMedium,
                                 )

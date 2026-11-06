@@ -1,6 +1,8 @@
 package com.mangaviewer.app.data.remote
 
-/** 统一的接口异常类型，UI 层据此显示中文提示。 */
+import com.mangaviewer.app.i18n.AppLocale
+
+/** 统一的接口异常类型；提示文案跟随当前界面语言（默认英语）。 */
 sealed class ApiException(message: String) : Exception(message) {
 
     class Network(message: String) : ApiException(message)
@@ -10,11 +12,13 @@ sealed class ApiException(message: String) : Exception(message) {
 
     class Parse(message: String) : ApiException(message)
 
-    object Unauthorized : ApiException("需要登录后操作")
+    object Unauthorized : ApiException("") {
+        override val message: String
+            get() = AppLocale.strings().messages.unauthorized
+    }
 
-    class RateLimited(val retryAfterMs: Long) : ApiException("请求过于频繁，请稍后再试")
+    class RateLimited(val retryAfterMs: Long) : ApiException(AppLocale.strings().messages.rateLimited)
 
     /** API Key 被服务端拒绝（401/403）。 */
-    class CredentialInvalid :
-        ApiException("API Key 无效或已失效，请到网页端 账号设置 → API Keys 重新生成")
+    class CredentialInvalid : ApiException(AppLocale.strings().messages.invalidKey)
 }

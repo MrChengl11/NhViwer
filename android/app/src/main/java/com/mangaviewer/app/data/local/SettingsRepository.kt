@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mangaviewer.app.i18n.AppLanguage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -23,6 +24,8 @@ enum class ImageQuality(val query: String) {
 }
 
 data class Settings(
+    /** 界面语言。产品默认英语，简体中文需要在设置里手动切换。 */
+    val language: AppLanguage = AppLanguage.ENGLISH,
     val apiBase: String = DEFAULT_API_BASE,
     val adultConfirmed: Boolean = false,
     val readerLayout: ReaderLayout = ReaderLayout.PAGED_HORIZONTAL,
@@ -75,6 +78,7 @@ data class Settings(
 class SettingsRepository(private val context: Context) {
 
     private object Keys {
+        val LANGUAGE = stringPreferencesKey("language")
         val API_BASE = stringPreferencesKey("api_base")
         val ADULT = booleanPreferencesKey("adult_confirmed")
         val LAYOUT = stringPreferencesKey("reader_layout")
@@ -95,6 +99,7 @@ class SettingsRepository(private val context: Context) {
 
     val settingsFlow: Flow<Settings> = context.dataStore.data.map { p ->
         Settings(
+            language = AppLanguage.fromTag(p[Keys.LANGUAGE]),
             apiBase = p[Keys.API_BASE] ?: Settings.DEFAULT_API_BASE,
             adultConfirmed = p[Keys.ADULT] ?: false,
             readerLayout = ReaderLayout.entries.firstOrNull { it.name == p[Keys.LAYOUT] }
@@ -119,6 +124,9 @@ class SettingsRepository(private val context: Context) {
     suspend fun current(): Settings = settingsFlow.first()
 
     suspend fun setApiBase(value: String) = edit { it[Keys.API_BASE] = value.trim().trimEnd('/') }
+
+    /** 切换界面语言（英语 / 简体中文），持久化后立即生效。 */
+    suspend fun setLanguage(value: AppLanguage) = edit { it[Keys.LANGUAGE] = value.tag }
     suspend fun setAdultConfirmed(value: Boolean) = edit { it[Keys.ADULT] = value }
     suspend fun setLayout(value: ReaderLayout) = edit { it[Keys.LAYOUT] = value.name }
     suspend fun setRtl(value: Boolean) = edit { it[Keys.RTL] = value }

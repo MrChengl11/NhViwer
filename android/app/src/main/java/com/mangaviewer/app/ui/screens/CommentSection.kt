@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.dp
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.model.CommentUi
 import com.mangaviewer.app.data.repo.CommentRepository
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.commentsTitle
+import com.mangaviewer.app.i18n.writeComment
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,6 +46,7 @@ fun CommentSection(
     var captcha by remember { mutableStateOf("") }
     var showCaptcha by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val s = LocalStrings.current
 
     LaunchedEffect(galleryId) {
         val saved = container.comments.draft(galleryId)
@@ -55,7 +59,7 @@ fun CommentSection(
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
         HorizontalDivider()
         Text(
-            "评论（${comments.size}）",
+            s.commentsTitle(comments.size),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(top = 12.dp),
@@ -72,7 +76,7 @@ fun CommentSection(
         }
         if (comments.isEmpty()) {
             Text(
-                "还没有评论",
+                s.comments.empty,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
@@ -82,7 +86,7 @@ fun CommentSection(
         OutlinedTextField(
             value = draft,
             onValueChange = { if (it.length <= CommentRepository.MAX_LENGTH) onDraftChange(it) },
-            label = { Text("写评论（${CommentRepository.MIN_LENGTH}-${CommentRepository.MAX_LENGTH} 字）") },
+            label = { Text(s.writeComment(CommentRepository.MIN_LENGTH, CommentRepository.MAX_LENGTH)) },
             minLines = 3,
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         )
@@ -93,7 +97,7 @@ fun CommentSection(
         ) {
             AssistChip(
                 onClick = { showCaptcha = !showCaptcha },
-                label = { Text(if (showCaptcha) "收起验证码" else "需要验证码？") },
+                label = { Text(if (showCaptcha) s.comments.hideCaptcha else s.comments.showCaptcha) },
             )
             Text(
                 "${draft.length}/${CommentRepository.MAX_LENGTH}",
@@ -105,12 +109,12 @@ fun CommentSection(
             OutlinedTextField(
                 value = captcha,
                 onValueChange = { captcha = it },
-                label = { Text("Turnstile token（可选）") },
+                label = { Text(s.comments.tokenLabel) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             Text(
-                "站点使用 Cloudflare Turnstile，无法自动通过；如在浏览器完成验证可粘贴 token。",
+                s.comments.tokenNote,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
@@ -123,10 +127,10 @@ fun CommentSection(
                     runCatching { container.comments.post(galleryId, draft, captcha.ifBlank { null }) }
                         .onSuccess {
                             onDraftChange("")
-                            snackbar.showSnackbar("评论已发布")
+                            snackbar.showSnackbar(s.comments.posted)
                             onPosted()
                         }
-                        .onFailure { snackbar.showSnackbar(it.message ?: "发布失败") }
+                        .onFailure { snackbar.showSnackbar(it.message ?: s.comments.postFailed) }
                     posting = false
                 }
             },
@@ -135,9 +139,9 @@ fun CommentSection(
         ) {
             if (posting) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("正在求解 PoW…", modifier = Modifier.padding(start = 8.dp))
+                Text(s.comments.solvingPow, modifier = Modifier.padding(start = 8.dp))
             } else {
-                Text("发布评论")
+                Text(s.comments.post)
             }
         }
     }

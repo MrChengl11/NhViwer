@@ -32,7 +32,7 @@ UI 使用 Google **Material Design 3（Expressive：大圆角、动态取色、�
 | 图片 | Coil 3.6.3 | 自定义 Interceptor：直连或走本地反代，多图床后备 |
 | 后台 | 前台服务（DATA_SYNC 类型） | 下载进度常驻通知 |
 
-规模：**40 个 Kotlin 文件 / 6100+ 行**，debug APK 22.2 MB（22,186,036 字节，v1.0.5）。
+规模：**42 个 Kotlin 文件 / 7200+ 行**，debug APK 22.3 MB（22,251,572 字节，v1.0.6）。
 
 ## 2. 架构总览
 
@@ -51,6 +51,7 @@ app/src/main/java/com/mangaviewer/app/
 │   │   └── pow/Sha256Pow.kt     # 登录 CoW 工作量证明
 │   ├── repo/                    # galleries / favorites / downloads / history / comments / tagIndex / account
 │   └── model/                   # UiModels + Mappers
+├── i18n/                        # 双语字符串表（English 默认 / 简体中文）+ AppLocale
 ├── download/DownloadService.kt  # 前台服务：把下载进度投影到常驻通知
 └── ui/
     ├── MangaRoot.kt             # 底部导航 + NavHost + 18+ 门控
@@ -60,6 +61,11 @@ app/src/main/java/com/mangaviewer/app/
 ```
 
 ## 3. 功能清单
+
+**界面语言**
+- 默认 **English**；设置页「Language / 语言」可切 **English / 简体中文**，底部导航、标题、按钮、提示、通知一起立即切换，不需要重启
+- 语言选择持久化在 DataStore（`language`），冷启动直接恢复；英文文案按 UI 语义重写（标签式措辞，避免单复数问题）
+- 字符串表：`i18n/Strings.kt`（`tools/i18n/gen_strings.py` 生成，改文案改脚本后重跑；生成前会校验空值与中英占位符一致性）
 
 **浏览**
 - 首页：最新 / 最多收藏 双榜、关键词搜索、热门标签快链；**上滑自动加载下一页（滑到哪儿加载到哪儿，无「加载更多」按钮）**，搜索入口在右上角
@@ -103,6 +109,7 @@ app/src/main/java/com/mangaviewer/app/
 - 图片画质（原图 / 1600 / 1080 / 720）
 - 连接方式：**直连**（设备自己挂了代理，默认走 `https://nhentai.net`）/ **本地反代**（默认 `http://127.0.0.1:8787`，可切 `http://10.0.2.2:8787`），一键「检测连接」
 - 下载并发数、下载存储位置（私有目录 / 自定义目录 + 恢复默认）、阅读器布局与预加载
+- 界面语言：**English（默认）/ 简体中文**，切换立即生效
 
 
 
@@ -127,7 +134,7 @@ targetSdk 37 下 Android 13+ 必须**运行时申请** `POST_NOTIFICATIONS`，�
 
 最新版见 GitHub Releases：<https://github.com/MrChengl11/NhViwer/releases>
 
-- `Nhviwer-1.0.5.apk` — v1.0.5（versionCode 5，debug 签名，22,186,036 字节，sha256 `82fd8664b8ed5f01b81decdcf9d944d2060ea7e58cca0d97d026fa1d379afa8b`）
+- `Nhviwer-1.0.6.apk` — v1.0.6（versionCode 6，debug 签名，22,251,572 字节，sha256 `101e9eec420c44600a78a53fd98efb5145b237333c42a6c55580793d9f37fc77`）
 - 客户端不含任何内容、也不内置代理：请在「设置」里选择「直连」（设备已挂代理）或「本地反代」（`node tools/nhentai-proxy.mjs`，默认 `http://127.0.0.1:8787`）
 - 从源码构建：`cd android && ./gradlew :app:assembleDebug`
 
@@ -165,5 +172,8 @@ targetSdk 37 下 Android 13+ 必须**运行时申请** `POST_NOTIFICATIONS`，�
 | 阅读页刷新当前页 + 独立换排版按钮 | ✅ MuMu 实机验证（刷新转圈后重载、四布局循环切换保留当前页、中心判定区回归正常） |
 | 搜索页 × 只清空输入框、不退回首页 | ✅ MuMu 实机验证（搜 futanari → 点 × → 停在全屏搜索页「输入关键词后开始搜索」且输入框重新聚焦；再输 swimsuit 提交正常；进详情返回后关键词与结果仍在；「取消」/返回键才回首页发现流） |
 | 搜索页从详情页返回保持关键词 | ✅ MuMu 实机验证（rememberSaveable 保存输入框内容，返回后顶栏仍显示 swimsuit 与搜索结果） |
+| 界面多语言（默认 English / 可切简体中文） | ✅ MuMu 实机验证（全新数据首启：英文门控 → 英文首页 / 设置；设置内切「简体中文」后导航、标题、统计行即时变中文；`adb` 强杀重启后仍为中文，再切回英文正常） |
+| 设置页语言选项 | ✅ MuMu 实机验证（Settings → Language：English / 简体中文 两枚选项，选中态清晰，切换无需重启） |
+| 英文首页 / 详情 / 标签分组 | ✅ MuMu 实机验证（本地反代出图后卡片显示 `Pages 182 · Saves 13`；详情页 `Pages 182 · Saves 21 · Comments 0`、`Start reading`、`Download`、`Category / Language / Artist` 全英文） |
 
 

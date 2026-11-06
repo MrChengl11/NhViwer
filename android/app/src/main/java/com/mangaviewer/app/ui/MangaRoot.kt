@@ -16,6 +16,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -28,6 +30,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.mangaviewer.app.data.AppContainer
+import com.mangaviewer.app.i18n.AppLocale
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.UiStrings
+import com.mangaviewer.app.i18n.stringsFor
 import com.mangaviewer.app.ui.screens.DetailScreen
 import com.mangaviewer.app.ui.screens.DownloadsScreen
 import com.mangaviewer.app.ui.screens.FavoritesScreen
@@ -42,14 +48,14 @@ import com.mangaviewer.app.ui.screens.SettingsScreen
 import com.mangaviewer.app.ui.screens.TagScreen
 import com.mangaviewer.app.ui.theme.MangaTheme
 
-private data class TabRoute(val route: String, val label: String, val icon: ImageVector)
+private data class TabRoute(val route: String, val label: (UiStrings) -> String, val icon: ImageVector)
 
 private val TABS = listOf(
-    TabRoute("home", "首页", Icons.Filled.Home),
-    TabRoute("browse", "分类", Icons.Filled.Sell),
-    TabRoute("favorites", "收藏", Icons.Filled.Favorite),
-    TabRoute("downloads", "下载", Icons.Filled.Download),
-    TabRoute("settings", "设置", Icons.Filled.Settings),
+    TabRoute("home", { it.nav.home }, Icons.Filled.Home),
+    TabRoute("browse", { it.nav.browse }, Icons.Filled.Sell),
+    TabRoute("favorites", { it.nav.favorites }, Icons.Filled.Favorite),
+    TabRoute("downloads", { it.nav.downloads }, Icons.Filled.Download),
+    TabRoute("settings", { it.nav.settings }, Icons.Filled.Settings),
 )
 
 @Composable
@@ -59,6 +65,9 @@ fun MangaRoot(container: AppContainer) {
     val settings by settingsRepo.settingsFlow.collectAsState(initial = null)
     val current = settings
     if (current == null) return
+    val strings = stringsFor(current.language)
+    LaunchedEffect(current.language) { AppLocale.apply(current.language) }
+    CompositionLocalProvider(LocalStrings provides strings) {
     MangaTheme(current) {
         if (!current.adultConfirmed) {
             GateScreen(onConfirm = { scope.launch { settingsRepo.setAdultConfirmed(true) } })
@@ -82,8 +91,8 @@ fun MangaRoot(container: AppContainer) {
                                         restoreState = true
                                     }
                                 },
-                                icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                label = { Text(tab.label) },
+                                icon = { Icon(tab.icon, contentDescription = tab.label(strings)) },
+                                label = { Text(tab.label(strings)) },
                             )
                         }
                     }
@@ -118,5 +127,6 @@ fun MangaRoot(container: AppContainer) {
                 }
             }
         }
+    }
     }
 }

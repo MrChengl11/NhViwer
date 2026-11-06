@@ -27,7 +27,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +40,16 @@ import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.local.ImageQuality
 import com.mangaviewer.app.data.local.ReaderLayout
 import com.mangaviewer.app.data.local.Settings
+import com.mangaviewer.app.i18n.AppLanguage
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.UiStrings
+import com.mangaviewer.app.i18n.concurrentDownloads
+import com.mangaviewer.app.i18n.customDir
+import com.mangaviewer.app.i18n.directNote
+import com.mangaviewer.app.i18n.loggedInAs
+import com.mangaviewer.app.i18n.preloadPages
+import com.mangaviewer.app.i18n.syncDone
+import com.mangaviewer.app.i18n.syncPushFailed
 import androidx.navigation.NavController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -54,8 +63,9 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
     val settings by settingsRepo.settingsFlow.collectAsState(initial = null)
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val s = settings ?: return
-    var apiBaseDraft by remember(s.apiBase) { mutableStateOf(s.apiBase) }
+    val cfg = settings ?: return
+    val s = LocalStrings.current
+    var apiBaseDraft by remember(cfg.apiBase) { mutableStateOf(cfg.apiBase) }
     var checking by remember { mutableStateOf(false) }
     val auth by container.account.auth.collectAsState()
     var syncing by remember { mutableStateOf(false) }
@@ -75,33 +85,53 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
         scope.launch {
             if (granted) {
                 settingsRepo.setDownloadTree(uri.toString())
-                snackbar.showSnackbar("下载目录已更新，仅影响之后的新下载")
+                snackbar.showSnackbar(s.settings.dirUpdated)
             } else {
-                snackbar.showSnackbar("没有获得该目录的读写权限，已保持原设置")
+                snackbar.showSnackbar(s.settings.dirNoPermission)
             }
         }
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("设置") }) },
+        topBar = { TopAppBar(title = { Text(s.settings.title) }) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SectionTitle("账号")
+            // 语言：默认英语；切到简体中文后立即生效并持久化。
+            SectionTitle(s.settings.languageSection)
+            Text(
+                s.settings.languageDesc,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = cfg.language == AppLanguage.ENGLISH,
+                    onClick = { scope.launch { settingsRepo.setLanguage(AppLanguage.ENGLISH) } },
+                    label = { Text(s.settings.languageEnglish) },
+                )
+                FilterChip(
+                    selected = cfg.language == AppLanguage.CHINESE_SIMPLIFIED,
+                    onClick = { scope.launch { settingsRepo.setLanguage(AppLanguage.CHINESE_SIMPLIFIED) } },
+                    label = { Text(s.settings.languageChinese) },
+                )
+            }
+
+            SectionTitle(s.settings.sectionAccount)
             Text(
                 if (auth.isLoggedIn) {
-                    "已登录：" + (auth.username?.takeIf { it.isNotBlank() } ?: "（无用户名）") + "（API Key）"
+                    s.loggedInAs(auth.username?.takeIf { it.isNotBlank() } ?: s.account.noUsername)
                 } else {
-                    "未登录。登录后可以把账号收藏同步到本地，收藏/取消收藏也会同步到账号。"
+                    s.settings.loggedOut
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { navController.navigate("login") }) {
-                    Text(if (auth.isLoggedIn) "账号详情" else "去登录")
+                    Text(if (auth.isLoggedIn) s.settings.accountDetails else s.settings.goLogin)
                 }
                 if (auth.isLoggedIn) {
                     Button(
@@ -112,40 +142,39 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
                                 runCatching { container.account.syncFavorites() }
                                     .onSuccess { r ->
                                         snackbar.showSnackbar(
-                                            "同步完成：拉取 " + r.pulled + " 条，推送 " + r.pushed + " 条" +
-                                                if (r.failedPush > 0) "（" + r.failedPush + " 条推送失败）" else "",
+                                            s.syncDone(r.pulled, r.pushed) +
+                                                if (r.failedPush > 0) s.syncPushFailed(r.failedPush) else "",
                                         )
                                     }
-                                    .onFailure { snackbar.showSnackbar(it.message ?: "同步失败") }
+                                    .onFailure { snackbar.showSnackbar(it.message ?: s.account.syncFailed) }
                                 syncing = false
                             }
                         },
-                    ) { Text(if (syncing) "同步中…" else "同步收藏") }
+                    ) { Text(if (syncing) s.account.syncing else s.account.syncFavorites) }
                 }
             }
 
-            SectionTitle("网络连接")
+            SectionTitle(s.settings.sectionNetwork)
             Text(
-                "设备自己能打开 nhentai.net（手机/平板上挂着代理或 TUN）时选「直连」，不需要电脑开反代；" +
-                    "设备自己连不上时才需要「本地反代」。",
+                s.settings.networkHelp,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
-                    selected = !s.directMode,
+                    selected = !cfg.directMode,
                     onClick = { scope.launch { container.settings.setDirectMode(false) } },
-                    label = { Text("本地反代") },
+                    label = { Text(s.settings.localProxy) },
                 )
                 FilterChip(
-                    selected = s.directMode,
+                    selected = cfg.directMode,
                     onClick = { scope.launch { container.settings.setDirectMode(true) } },
-                    label = { Text("直连（已挂代理）") },
+                    label = { Text(s.settings.directProxy) },
                 )
             }
-            if (s.directMode) {
+            if (cfg.directMode) {
                 Text(
-                    "直连模式：API 走 " + Settings.DIRECT_API_BASE + "，图片直接请求图床域名。",
+                    s.directNote(Settings.DIRECT_API_BASE),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -153,12 +182,12 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
                 OutlinedTextField(
                     value = apiBaseDraft,
                     onValueChange = { apiBaseDraft = it },
-                    label = { Text("反代地址") },
+                    label = { Text(s.settings.proxyAddress) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "先在宿主机运行 proxy（默认 8787），再执行 adb reverse tcp:8787 tcp:8787。",
+                    s.settings.proxyHelp,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -173,20 +202,20 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!s.directMode) {
+                if (!cfg.directMode) {
                     Button(onClick = {
                         scope.launch {
                             container.settings.setApiBase(apiBaseDraft)
-                            snackbar.showSnackbar("已保存")
+                            snackbar.showSnackbar(s.settings.saved)
                         }
-                    }) { Text("保存") }
+                    }) { Text(s.settings.save) }
                 }
                 Button(
                     enabled = !checking,
                     onClick = {
                         scope.launch {
                             checking = true
-                            val direct = s.directMode
+                            val direct = cfg.directMode
                             val result = withContext(Dispatchers.IO) {
                                 runCatching {
                                     val root = if (direct) Settings.DIRECT_API_BASE else apiBaseDraft.trimEnd('/')
@@ -197,67 +226,67 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
                             }
                             snackbar.showSnackbar(
                                 when {
-                                    !result -> "连接失败"
-                                    direct -> "直连正常"
-                                    else -> "反代正常"
+                                    !result -> s.settings.connectFailed
+                                    direct -> s.settings.directOk
+                                    else -> s.settings.proxyOk
                                 },
                             )
                             checking = false
                         }
                     },
-                ) { Text(if (checking) "检测中…" else "检测连接") }
+                ) { Text(if (checking) s.settings.checking else s.settings.checkConnection) }
             }
 
-            SectionTitle("阅读")
-            Text("翻页方向", style = MaterialTheme.typography.labelMedium)
+            SectionTitle(s.settings.sectionReading)
+            Text(s.settings.direction, style = MaterialTheme.typography.labelMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = s.readerRtl, onClick = { scope.launch { container.settings.setRtl(true) } }, label = { Text("日漫（从右到左）") })
-                FilterChip(selected = !s.readerRtl, onClick = { scope.launch { container.settings.setRtl(false) } }, label = { Text("从左到右") })
+                FilterChip(selected = cfg.readerRtl, onClick = { scope.launch { container.settings.setRtl(true) } }, label = { Text(s.settings.rtl) })
+                FilterChip(selected = !cfg.readerRtl, onClick = { scope.launch { container.settings.setRtl(false) } }, label = { Text(s.settings.ltr) })
             }
-            Text("布局", style = MaterialTheme.typography.labelMedium)
+            Text(s.settings.layout, style = MaterialTheme.typography.labelMedium)
             // FlowRow：4 个选项在窄屏会超出屏幕宽度，用 FlowRow 自动换行而不是压扁最后一个。
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ReaderLayout.entries.forEach { layout ->
                     FilterChip(
-                        selected = s.readerLayout == layout,
+                        selected = cfg.readerLayout == layout,
                         onClick = { scope.launch { container.settings.setLayout(layout) } },
-                        label = { Text(layoutLabel(layout)) },
+                        label = { Text(layoutLabel(layout, s)) },
                     )
                 }
             }
-            Text("预加载页数：${s.preloadCount}", style = MaterialTheme.typography.labelMedium)
+            Text(s.preloadPages(cfg.preloadCount), style = MaterialTheme.typography.labelMedium)
             Slider(
-                value = s.preloadCount.toFloat(),
+                value = cfg.preloadCount.toFloat(),
                 onValueChange = { v -> scope.launch { container.settings.setPreload(v.toInt()) } },
                 valueRange = 1f..8f,
                 steps = 6,
             )
-            Text("画质", style = MaterialTheme.typography.labelMedium)
+            Text(s.settings.quality, style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ImageQuality.entries.forEach { quality ->
                     FilterChip(
-                        selected = s.imageQuality == quality,
+                        selected = cfg.imageQuality == quality,
                         onClick = { scope.launch { container.settings.setQuality(quality) } },
-                        label = { Text(qualityLabel(quality)) },
+                        label = { Text(qualityLabel(quality, s)) },
                     )
                 }
             }
 
-            SectionTitle("外观")
+            SectionTitle(s.settings.sectionAppearance)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = s.darkMode, onClick = { scope.launch { container.settings.setDarkMode(!s.darkMode) } }, label = { Text("深色模式") })
+                FilterChip(selected = cfg.darkMode, onClick = { scope.launch { container.settings.setDarkMode(!cfg.darkMode) } }, label = { Text(s.settings.darkMode) })
                 FilterChip(
-                    selected = s.dynamicColor,
-                    onClick = { scope.launch { container.settings.setDynamicColor(!s.dynamicColor) } },
-                    label = { Text("动态取色（Android 12+）") },
+                    selected = cfg.dynamicColor,
+                    onClick = { scope.launch { container.settings.setDynamicColor(!cfg.dynamicColor) } },
+                    label = { Text(s.settings.dynamicColor) },
                 )
             }
 
-            SectionTitle("下载")
-            val customDir = s.downloadTree.isNotBlank()
-            Text("保存位置", style = MaterialTheme.typography.labelMedium)
+            SectionTitle(s.settings.sectionDownloads)
+            val customDir = cfg.downloadTree.isNotBlank()
+            Text(s.settings.saveLocation, style = MaterialTheme.typography.labelMedium)
             Text(
-                text = if (customDir) "自定义目录：${treeLabel(s.downloadTree)}" else "应用私有目录（默认）",
+                text = if (customDir) s.customDir(treeLabel(cfg.downloadTree, s)) else s.settings.privateDir,
                 style = MaterialTheme.typography.bodySmall,
             )
             if (!customDir) {
@@ -268,41 +297,40 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
                 )
             }
             Text(
-                "每部漫画在所选目录下建一个以 ID 命名的子文件夹，图片按页号保存；" +
-                    "切换目录只影响之后的新下载，已下载的内容仍可正常阅读；卸载 App 会删除应用私有目录里的内容。",
+                s.settings.downloadDirHelp,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { downloadDirLauncher.launch(null) }) {
-                    Text(if (customDir) "更改下载目录" else "选择下载目录")
+                    Text(if (customDir) s.settings.changeDir else s.settings.chooseDir)
                 }
                 if (customDir) {
                     OutlinedButton(
                         onClick = {
                             scope.launch {
                                 settingsRepo.setDownloadTree("")
-                                snackbar.showSnackbar("已恢复默认下载目录")
+                                snackbar.showSnackbar(s.settings.defaultRestored)
                             }
                         },
-                    ) { Text("恢复默认") }
+                    ) { Text(s.settings.restoreDefault) }
                 }
             }
-            Text("并发下载：${s.concurrentDownloads}", style = MaterialTheme.typography.labelMedium)
+            Text(s.concurrentDownloads(cfg.concurrentDownloads), style = MaterialTheme.typography.labelMedium)
             Slider(
-                value = s.concurrentDownloads.toFloat(),
+                value = cfg.concurrentDownloads.toFloat(),
                 onValueChange = { v -> scope.launch { container.settings.setConcurrency(v.toInt()) } },
                 valueRange = 1f..6f,
                 steps = 4,
             )
 
-            SectionTitle("关于")
+            SectionTitle(s.settings.sectionAbout)
             Text(
-                "Nhviwer 仅用于技术研究与学习，内容来自第三方站点，应用不托管任何内容；请遵守当地法律法规。",
+                s.settings.aboutText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Button(onClick = { scope.launch { container.settings.setAdultConfirmed(false) } }) { Text("重新显示成人确认页") }
+            Button(onClick = { scope.launch { container.settings.setAdultConfirmed(false) } }) { Text(s.settings.showGate) }
         }
     }
 }
@@ -318,22 +346,22 @@ private fun SectionTitle(text: String) {
 }
 
 /** 把 SAF tree URI 转成用户能看懂的路径，如 primary:Download/NhViwer -> Download/NhViwer。 */
-private fun treeLabel(raw: String): String {
+private fun treeLabel(raw: String, s: UiStrings): String {
     val id = runCatching { DocumentsContract.getTreeDocumentId(Uri.parse(raw)) }.getOrNull().orEmpty()
     val rel = id.substringAfter(':', id)
-    return if (rel.isBlank() || rel == "/") "存储根目录" else rel
+    return if (rel.isBlank() || rel == "/") s.settings.storageRoot else rel
 }
 
-private fun layoutLabel(layout: ReaderLayout): String = when (layout) {
-    ReaderLayout.PAGED_HORIZONTAL -> "左右翻页"
-    ReaderLayout.PAGED_DOUBLE -> "双页跨页"
-    ReaderLayout.PAGED_VERTICAL -> "上下翻页"
-    ReaderLayout.CONTINUOUS -> "连续滚动"
+private fun layoutLabel(layout: ReaderLayout, s: UiStrings): String = when (layout) {
+    ReaderLayout.PAGED_HORIZONTAL -> s.settings.layoutH
+    ReaderLayout.PAGED_DOUBLE -> s.settings.layoutDouble
+    ReaderLayout.PAGED_VERTICAL -> s.settings.layoutV
+    ReaderLayout.CONTINUOUS -> s.settings.layoutContinuous
 }
 
-private fun qualityLabel(quality: ImageQuality): String = when (quality) {
-    ImageQuality.ORIGINAL -> "原图"
-    ImageQuality.HIGH -> "高清"
-    ImageQuality.MEDIUM -> "中等"
-    ImageQuality.LOW -> "省流"
+private fun qualityLabel(quality: ImageQuality, s: UiStrings): String = when (quality) {
+    ImageQuality.ORIGINAL -> s.settings.qualityOriginal
+    ImageQuality.HIGH -> s.settings.qualityHigh
+    ImageQuality.MEDIUM -> s.settings.qualityMedium
+    ImageQuality.LOW -> s.settings.qualityLow
 }

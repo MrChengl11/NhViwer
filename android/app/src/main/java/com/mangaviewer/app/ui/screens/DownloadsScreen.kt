@@ -51,6 +51,9 @@ import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_RUNNING
 import com.mangaviewer.app.data.db.DownloadEntity
 import com.mangaviewer.app.data.repo.DownloadRepository
 import com.mangaviewer.app.download.DownloadService
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.UiStrings
+import com.mangaviewer.app.i18n.downloadsTitle
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.GalleryThumb
 import kotlinx.coroutines.launch
@@ -58,16 +61,25 @@ import kotlinx.coroutines.launch
 private data class DownloadBucket(val key: String, val label: String, val items: List<DownloadEntity>)
 
 private val BUCKET_ORDER = listOf(
-    DOWNLOAD_STATUS_RUNNING to "正在下载",
-    DOWNLOAD_STATUS_QUEUED to "排队中",
-    DOWNLOAD_STATUS_PAUSED to "已暂停 / 待继续",
-    DOWNLOAD_STATUS_FAILED to "失败",
-    DOWNLOAD_STATUS_DONE to "已完成",
+    DOWNLOAD_STATUS_RUNNING,
+    DOWNLOAD_STATUS_QUEUED,
+    DOWNLOAD_STATUS_PAUSED,
+    DOWNLOAD_STATUS_FAILED,
+    DOWNLOAD_STATUS_DONE,
 )
 
-private fun bucketOf(list: List<DownloadEntity>): List<DownloadBucket> = BUCKET_ORDER.mapNotNull { (key, label) ->
+private fun bucketLabel(key: String, s: UiStrings): String = when (key) {
+    DOWNLOAD_STATUS_RUNNING -> s.downloads.filterRunning
+    DOWNLOAD_STATUS_QUEUED -> s.downloads.filterQueued
+    DOWNLOAD_STATUS_PAUSED -> s.downloads.filterPaused
+    DOWNLOAD_STATUS_FAILED -> s.downloads.filterFailed
+    DOWNLOAD_STATUS_DONE -> s.downloads.filterDone
+    else -> key
+}
+
+private fun bucketOf(list: List<DownloadEntity>, s: UiStrings): List<DownloadBucket> = BUCKET_ORDER.mapNotNull { key ->
     val items = list.filter { it.status == key }
-    if (items.isEmpty()) null else DownloadBucket(key, label, items)
+    if (items.isEmpty()) null else DownloadBucket(key, bucketLabel(key, s), items)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,19 +89,20 @@ fun DownloadsScreen(container: AppContainer, navController: NavController) {
     val settings by container.settings.settingsFlow.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val buckets = bucketOf(downloads)
+    val s = LocalStrings.current
+    val buckets = bucketOf(downloads, s)
     val active = downloads.count { it.status == DOWNLOAD_STATUS_RUNNING || it.status == DOWNLOAD_STATUS_QUEUED }
     val totalBytes = downloads.sumOf { it.bytes }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("下载（${downloads.size}）") },
+                title = { Text(s.downloadsTitle(downloads.size)) },
                 actions = {
                     if (active > 0) {
                         AssistChip(
                             onClick = { container.downloads.pauseAll(); DownloadService.stop(context) },
-                            label = { Text("全部暂停") },
+                            label = { Text(s.downloads.pauseAll) },
                         )
                     } else if (downloads.any { it.status == DOWNLOAD_STATUS_PAUSED }) {
                         AssistChip(
@@ -97,7 +110,7 @@ fun DownloadsScreen(container: AppContainer, navController: NavController) {
                                 container.downloads.startPaused()
                                 if (settings?.foregroundDownloads == true) DownloadService.start(context)
                             },
-                            label = { Text("全部继续") },
+                            label = { Text(s.downloads.resumeAll) },
                         )
                     }
                 },
@@ -106,7 +119,7 @@ fun DownloadsScreen(container: AppContainer, navController: NavController) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (downloads.isEmpty()) {
-                EmptyBox("还没有下载任务")
+                EmptyBox(s.downloads.empty)
             } else {
                 SummaryBar(downloads.size, active, totalBytes)
                 LazyColumn(
@@ -149,6 +162,7 @@ fun DownloadsScreen(container: AppContainer, navController: NavController) {
 
 @Composable
 private fun SummaryBar(count: Int, active: Int, bytes: Long) {
+    val s = LocalStrings.current
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth(),
@@ -157,9 +171,9 @@ private fun SummaryBar(count: Int, active: Int, bytes: Long) {
             Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            InfoChip("任务", count.toString())
-            InfoChip("进行中", active.toString())
-            InfoChip("占用", formatBytes(bytes))
+            InfoChip(s.downloads.headerTask, count.toString())
+            InfoChip(s.downloads.headerProgress, active.toString())
+            InfoChip(s.downloads.headerSize, formatBytes(bytes))
         }
     }
 }
@@ -179,6 +193,7 @@ private fun DownloadRow(
     onToggle: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val s = LocalStrings.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -243,14 +258,14 @@ private fun DownloadRow(
                     else -> Icons.Filled.Pause
                 },
                 contentDescription = when (entity.status) {
-                    DOWNLOAD_STATUS_DONE -> "阅读"
-                    DOWNLOAD_STATUS_PAUSED, DOWNLOAD_STATUS_FAILED -> "继续"
-                    else -> "暂停"
+                    DOWNLOAD_STATUS_DONE -> s.downloads.read
+                    DOWNLOAD_STATUS_PAUSED, DOWNLOAD_STATUS_FAILED -> s.downloads.resume
+                    else -> s.downloads.pause
                 },
             )
         }
         IconButton(onClick = onRemove) {
-            Icon(Icons.Filled.Delete, contentDescription = "删除")
+            Icon(Icons.Filled.Delete, contentDescription = s.common.delete)
         }
     }
 }

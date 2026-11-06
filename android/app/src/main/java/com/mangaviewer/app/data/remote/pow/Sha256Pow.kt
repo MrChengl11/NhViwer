@@ -1,5 +1,7 @@
 package com.mangaviewer.app.data.remote.pow
 
+import com.mangaviewer.app.i18n.AppLocale
+import com.mangaviewer.app.i18n.powFailed
 import java.security.MessageDigest
 
 /**
@@ -19,7 +21,7 @@ class Sha256Pow {
             if (leadingZeroBits(hash) >= difficulty) return counter.toString()
             counter++
         }
-        error("PoW 求解失败（尝试 $maxAttempts 次）")
+        error(AppLocale.strings().powFailed(maxAttempts))
     }
 
     fun verify(challenge: String, nonce: String, difficulty: Int): Boolean {

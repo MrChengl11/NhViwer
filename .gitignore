@@ -25,6 +25,10 @@ dist/
 .DS_Store
 Thumbs.db
 
+# ---- Python 工具 ----
+__pycache__/
+*.pyc
+
 # ---- Node（本地反代脚本） ----
 node_modules/
 logs/

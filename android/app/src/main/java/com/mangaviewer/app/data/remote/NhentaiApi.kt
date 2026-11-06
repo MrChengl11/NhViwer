@@ -1,5 +1,6 @@
 package com.mangaviewer.app.data.remote
 
+import com.mangaviewer.app.i18n.AppLocale
 import com.mangaviewer.app.data.remote.dto.ApiKeyCreatedDto
 import com.mangaviewer.app.data.remote.dto.CommentDto
 import com.mangaviewer.app.data.remote.dto.CommentPageDto
@@ -120,7 +121,7 @@ class NhentaiApi(
             mapOf("page" to "$page", "per_page" to "$perPage"),
         )
         return runCatching { json.decodeFromString(CommentPageDto.serializer(), raw) }
-            .getOrElse { throw ApiException.Parse("评论列表解析失败") }
+            .getOrElse { throw ApiException.Parse(AppLocale.strings().messages.parseComments) }
     }
 
     suspend fun postComment(galleryId: Long, body: String, challenge: String, nonce: String, captcha: String?): CommentDto {
@@ -204,7 +205,7 @@ class NhentaiApi(
             } else {
                 json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(GalleryListItemDto.serializer()), raw)
             }
-        }.getOrElse { throw ApiException.Parse("列表解析失败") }
+        }.getOrElse { throw ApiException.Parse(AppLocale.strings().messages.parseList) }
     }
 
     private fun buildUrl(path: String, params: Map<String, String>): HttpUrl {
@@ -257,11 +258,11 @@ class NhentaiApi(
             } catch (e: ApiException) {
                 throw e
             } catch (e: IOException) {
-                lastError = ApiException.Network(e.message ?: "网络错误")
+                lastError = ApiException.Network(e.message ?: AppLocale.strings().messages.networkError)
                 delay(300L * attempt)
             }
         }
-        throw lastError ?: ApiException.Network("请求失败")
+        throw lastError ?: ApiException.Network(AppLocale.strings().messages.requestFailed)
     }
 
     companion object {

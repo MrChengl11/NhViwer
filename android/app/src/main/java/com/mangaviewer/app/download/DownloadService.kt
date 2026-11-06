@@ -1,4 +1,8 @@
 package com.mangaviewer.app.download
+import com.mangaviewer.app.i18n.AppLocale
+import com.mangaviewer.app.i18n.activeTasks
+import com.mangaviewer.app.i18n.notificationLine
+
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -69,7 +73,7 @@ class DownloadService : Service() {
 
     private fun startWatch() {
         if (watchJob != null) return
-        startForegroundCompat("准备下载…")
+        startForegroundCompat(AppLocale.strings().service.preparing)
         watchJob = scope.launch {
             Log.i(TAG, "watch started")
             var idleTicks = 0
@@ -94,9 +98,10 @@ class DownloadService : Service() {
                 val total = active.sumOf { it.totalPages }
                 val progress = if (total > 0) (done * 100 / total) else 0
                 val title =
-                    if (active.size == 1) active.first().title else "${active.size} 个任务下载中"
-                startForegroundCompat("$title · 已完成 $done/$total 页")
-                updateNotification("$title · 已完成 $done/$total 页", progress)
+                    if (active.size == 1) active.first().title else AppLocale.strings().activeTasks(active.size)
+                val text = AppLocale.strings().notificationLine(title, done, total)
+                startForegroundCompat(text)
+                updateNotification(text, progress)
             }
         }
     }
@@ -152,13 +157,13 @@ class DownloadService : Service() {
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_download)
-            .setContentTitle("漫画下载")
+            .setContentTitle(AppLocale.strings().service.notificationTitle)
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .addAction(0, "全部暂停", pause)
+            .addAction(0, AppLocale.strings().service.pauseAll, pause)
         if (progress >= 0) builder.setProgress(100, progress.coerceIn(0, 100), false)
         else builder.setProgress(0, 0, true)
         return builder.build()
@@ -174,10 +179,14 @@ class DownloadService : Service() {
 
     private fun createChannel() {
         val manager = getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
+        // 每次都重建一次：切换语言后通知渠道名也要跟着变，已存在的渠道允许被更新。
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "下载进度", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "显示漫画下载进度"
+            NotificationChannel(
+                CHANNEL_ID,
+                AppLocale.strings().service.channelName,
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = AppLocale.strings().service.channelDesc
                 setShowBadge(false)
             },
         )

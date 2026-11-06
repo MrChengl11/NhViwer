@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.mangaviewer.app.data.model.GalleryUi
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
+import com.mangaviewer.app.i18n.LocalStrings
+import com.mangaviewer.app.i18n.statsPages
 
 /** 缩略图：走图片候选列表（t1..t4 优先），反代由 Coil 拦截器完成。 */
 @Composable
@@ -38,13 +40,14 @@ fun GalleryThumb(
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
 ) {
+    val s = LocalStrings.current
     val model = ImageProxyInterceptor.candidates(path, thumb = true).firstOrNull()
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
         if (model == null) {
-            Text("无图", style = MaterialTheme.typography.labelSmall)
+            Text(s.common.noImage, style = MaterialTheme.typography.labelSmall)
         } else {
             AsyncImage(
                 model = model,
@@ -65,6 +68,7 @@ fun GalleryCard(
     selected: Boolean = false,
     onLongClick: (() -> Unit)? = null,
 ) {
+    val s = LocalStrings.current
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
@@ -101,7 +105,7 @@ fun GalleryCard(
                 ) {
                     Icon(
                         Icons.Filled.CheckCircle,
-                        contentDescription = "已选中",
+                        contentDescription = s.common.selected,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(36.dp),
                     )
@@ -116,7 +120,7 @@ fun GalleryCard(
             modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
         )
         Text(
-            text = "${item.numPages} 页 · ${item.numFavorites} 收藏",
+            text = s.statsPages(item.numPages, item.numFavorites),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -134,6 +138,7 @@ fun LoadingBox(modifier: Modifier = Modifier) {
 
 @Composable
 fun ErrorBox(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
     Column(
         modifier = modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
@@ -141,7 +146,7 @@ fun ErrorBox(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier
     ) {
         Text(message, style = MaterialTheme.typography.bodyMedium)
         Row(modifier = Modifier.padding(top = 12.dp)) {
-            androidx.compose.material3.Button(onClick = onRetry) { Text("重试") }
+            androidx.compose.material3.Button(onClick = onRetry) { Text(s.common.retry) }
         }
     }
 }

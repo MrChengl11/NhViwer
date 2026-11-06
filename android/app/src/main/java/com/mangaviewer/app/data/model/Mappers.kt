@@ -1,4 +1,6 @@
 package com.mangaviewer.app.data.model
+import com.mangaviewer.app.i18n.AppLocale
+
 
 import com.mangaviewer.app.data.remote.dto.CommentDto
 import com.mangaviewer.app.data.remote.dto.GalleryDetailDto
@@ -64,7 +66,7 @@ fun TagDto.toUi(): TagUi = TagUi(id = id, type = type, name = name, count = coun
 fun CommentDto.toUi(): CommentUi = CommentUi(
     id = id,
     body = body,
-    author = (poster ?: user)?.username?.takeIf { it.isNotBlank() } ?: "匿名",
+    author = (poster ?: user)?.username?.takeIf { it.isNotBlank() } ?: AppLocale.strings().messages.anonymous,
     postedAt = postedAt.toEpochMillis(),
 )
 
