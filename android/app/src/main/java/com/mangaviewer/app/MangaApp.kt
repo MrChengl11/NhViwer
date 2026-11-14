@@ -28,6 +28,8 @@ class MangaApp : Application() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             container.downloads.resumeInterrupted()
         }
+        // 自动识别下载目录里已有的漫画（应用重装 / 数据库丢失后仍能找回）。
+        container.downloads.autoScan()
     }
 
     private fun buildImageLoader(context: PlatformContext): ImageLoader =

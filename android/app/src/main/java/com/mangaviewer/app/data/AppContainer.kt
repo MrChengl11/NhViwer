@@ -3,6 +3,7 @@ package com.mangaviewer.app.data
 import android.content.Context
 import androidx.room.Room
 import com.mangaviewer.app.data.db.AppDatabase
+import com.mangaviewer.app.data.db.MIGRATION_1_2
 import com.mangaviewer.app.data.local.SettingsRepository
 import com.mangaviewer.app.data.remote.AuthStore
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
@@ -35,7 +36,9 @@ class AppContainer(context: Context) {
         appContext,
         AppDatabase::class.java,
         "manga.db",
-    ).build()
+    )
+        .addMigrations(MIGRATION_1_2)
+        .build()
 
     val favoriteDao = database.favoriteDao()
     val downloadDao = database.downloadDao()

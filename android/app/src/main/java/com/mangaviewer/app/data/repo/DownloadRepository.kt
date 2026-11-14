@@ -4,14 +4,18 @@ import com.mangaviewer.app.i18n.failedPages
 
 
 import com.mangaviewer.app.data.AppContainer
+import com.mangaviewer.app.data.db.DOWNLOAD_ORIGIN_APP
+import com.mangaviewer.app.data.db.DOWNLOAD_ORIGIN_SCAN
 import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_DONE
 import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_FAILED
 import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_PAUSED
 import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_QUEUED
 import com.mangaviewer.app.data.db.DOWNLOAD_STATUS_RUNNING
 import com.mangaviewer.app.data.db.DownloadEntity
+import com.mangaviewer.app.data.db.encodeNameList
 import com.mangaviewer.app.data.local.Settings
 import com.mangaviewer.app.data.model.GalleryUi
+import com.mangaviewer.app.data.remote.ApiException
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -20,9 +24,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -31,6 +39,27 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
+
+/** 本地目录扫描的实时进度（UI 顶部的细进度条用），结束后带上一次性结果。 */
+data class ScanProgress(
+    val running: Boolean = false,
+    val enriching: Boolean = false,
+    val processed: Int = 0,
+    val total: Int = 0,
+    val manual: Boolean = false,
+    /** 每次扫描结束自增，UI 用它只消费一次结果、不重复弹提示。 */
+    val reportId: Long = 0,
+    val report: ScanReport? = null,
+)
+
+/** 一次扫描的结果；matched = 已有记录与磁盘状态对齐的条数。 */
+data class ScanReport(
+    val imported: Int = 0,
+    val matched: Int = 0,
+    val enriched: Int = 0,
+    val failed: Int = 0,
+    val pendingMetadata: Int = 0,
+)
 
 /**
  * 下载仓库：入队 → 协程池按并发度抓图 → 落盘到 filesDir/downloads/<galleryId>/0001.jpg。
@@ -56,6 +85,14 @@ class DownloadRepository(private val container: AppContainer) {
 
     private val storage = DownloadStorage(container.appContext, { customTree }, { customTrees })
 
+    /** 扫描互斥：自动扫描与手动「扫描本地」不会同时跑。 */
+    private val scanMutex = Mutex()
+    private val _scanProgress = MutableStateFlow(ScanProgress())
+    val scanProgress: StateFlow<ScanProgress> = _scanProgress.asStateFlow()
+    @Volatile
+    private var lastAutoScanAt = 0L
+    private var scanReportSeq = 0L
+
     init {
         // 下载可能早于设置页被调用，先同步读一次当前值，之后跟随设置变化。
         val initial = runCatching {
@@ -65,8 +102,11 @@ class DownloadRepository(private val container: AppContainer) {
         customTrees = initial?.downloadTrees.orEmpty()
         scope.launch {
             container.settings.settingsFlow.collect {
+                val changed = customTree != it.downloadTree || customTrees != it.downloadTrees
                 customTree = it.downloadTree
                 customTrees = it.downloadTrees
+                // 切换下载目录后立即允许下一次自动扫描，不用等 5 分钟节流。
+                if (changed) lastAutoScanAt = 0L
             }
         }
     }
@@ -104,6 +144,9 @@ class DownloadRepository(private val container: AppContainer) {
                 updatedAt = now,
                 error = null,
                 bytes = existing?.bytes ?: 0L,
+                artistsJson = encodeNameList(ui.tags.filter { it.type == "artist" }.map { it.name }),
+                categoriesJson = encodeNameList(ui.tags.filter { it.type == "category" }.map { it.name }),
+                origin = DOWNLOAD_ORIGIN_APP,
             ),
         )
         start(ui.id)
@@ -142,14 +185,21 @@ class DownloadRepository(private val container: AppContainer) {
         jobs.keys.toList().forEach { pause(it) }
     }
 
-    /** 把所有未完成任务（RUNNING / QUEUED / PAUSED）重新排进队列。 */
+    /**
+     * 把所有未完成任务（RUNNING / QUEUED / PAUSED）重新排进队列。
+     *
+     * 扫描导入的条目（origin = SCAN）不在此自动恢复：它们可能只是本地残缺目录，
+     * 若用户没有明确点「继续」，不应因为前台服务启动就偷偷开始联网下载。
+     * 用户显式点「全部继续」走 [startPaused]，不受此限制。
+     */
     fun startAll() {
         scope.launch {
             container.downloadDao.all()
                 .filter {
-                    it.status == DOWNLOAD_STATUS_PAUSED ||
+                    (it.status == DOWNLOAD_STATUS_PAUSED ||
                         it.status == DOWNLOAD_STATUS_QUEUED ||
-                        it.status == DOWNLOAD_STATUS_RUNNING
+                        it.status == DOWNLOAD_STATUS_RUNNING) &&
+                        it.origin != DOWNLOAD_ORIGIN_SCAN
                 }
                 .forEach { start(it.galleryId) }
         }
@@ -196,18 +246,335 @@ class DownloadRepository(private val container: AppContainer) {
 
     fun countExisting(galleryId: Long, total: Int): Int = storage.countExisting(galleryId, total)
 
+    // ---------------- 本地目录扫描 / 匹配 ----------------
+
+    /**
+     * 自动扫描：只做本地目录识别与匹配，不联网。
+     * 应用启动、进入下载页时调用；5 分钟内重复调用会被忽略（全目录扫描较重）。
+     */
+    fun autoScan() {
+        val now = System.currentTimeMillis()
+        if (now - lastAutoScanAt < AUTO_SCAN_INTERVAL_MS) return
+        lastAutoScanAt = now
+        scope.launch {
+            runCatching { scanLocal(deep = false) }
+        }
+    }
+
+    /**
+     * 在仓库自己的作用域里发起一次扫描（离开下载页也会继续）。
+     * 结果通过 [scanProgress] 的 reportId / report 一次性广播给 UI。
+     */
+    fun requestScan(deep: Boolean = true) {
+        scope.launch {
+            runCatching { scanLocal(deep) }
+        }
+    }
+
+    /**
+     * 扫描：识别 / 导入本地已有的漫画；deep=true 时并从网络补全缺失的标题、封面、作者、分类。
+     * 返回 null 表示已有扫描在跑。扫描只读本地文件，不会删除任何内容。
+     */
+    suspend fun scanLocal(deep: Boolean = true): ScanReport? = withContext(Dispatchers.IO) {
+        if (!scanMutex.tryLock()) return@withContext null
+        _scanProgress.value = ScanProgress(running = true, manual = deep)
+        try {
+            val report = performScan(deep)
+            scanReportSeq += 1
+            _scanProgress.value = ScanProgress(
+                manual = deep,
+                reportId = scanReportSeq,
+                report = report,
+            )
+            report
+        } catch (e: CancellationException) {
+            _scanProgress.value = ScanProgress()
+            throw e
+        } catch (e: Exception) {
+            // 别静默消失：给 UI 一条失败报告，至少能弹一次提示。
+            scanReportSeq += 1
+            _scanProgress.value = ScanProgress(
+                manual = deep,
+                reportId = scanReportSeq,
+                report = ScanReport(failed = 1),
+            )
+            throw e
+        } finally {
+            scanMutex.unlock()
+        }
+    }
+
+    /** 单条补全（下载页每条缺失信息的快捷操作）；返回是否成功。 */
+    suspend fun reloadMetadata(galleryId: Long): Boolean = withContext(Dispatchers.IO) {
+        val entity = container.downloadDao.find(galleryId) ?: return@withContext false
+        if (entity.status == DOWNLOAD_STATUS_RUNNING || entity.status == DOWNLOAD_STATUS_QUEUED) {
+            return@withContext false
+        }
+        try {
+            enrichOne(galleryId, null)
+            container.downloadDao.find(galleryId)?.isMissingMetadata == false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private suspend fun performScan(deep: Boolean): ScanReport {
+        val local = storage.scanLocalGalleries()
+        val now = System.currentTimeMillis()
+        var imported = 0
+        var matched = 0
+        _scanProgress.value = ScanProgress(running = true, total = local.size)
+
+        for ((index, gallery) in local.withIndex()) {
+            val latest = container.downloadDao.find(gallery.galleryId)
+            when {
+                latest == null -> {
+                    val candidate = buildImportedEntity(gallery, now)
+                    // 构建期间用户可能刚好从详情页加入下载：再确认一次，绝不覆盖新任务。
+                    if (container.downloadDao.find(gallery.galleryId) == null) {
+                        container.downloadDao.upsert(candidate)
+                        imported++
+                    }
+                }
+
+                latest.status == DOWNLOAD_STATUS_RUNNING ||
+                    latest.status == DOWNLOAD_STATUS_QUEUED -> Unit
+
+                else -> {
+                    val merged = mergeScanned(latest, gallery, now)
+                    if (merged != latest) {
+                        // 补标题 / 封面期间任务可能被恢复：写回前再挡一次进行中的任务。
+                        val guard = container.downloadDao.find(gallery.galleryId)
+                        if (guard != null &&
+                            guard.status != DOWNLOAD_STATUS_RUNNING &&
+                            guard.status != DOWNLOAD_STATUS_QUEUED
+                        ) {
+                            container.downloadDao.upsert(merged)
+                            matched++
+                        }
+                    }
+                }
+            }
+            _scanProgress.value = ScanProgress(running = true, processed = index + 1, total = local.size)
+        }
+
+        val localPageCounts = local.associate { it.galleryId to it.pageCount }
+        var enriched = 0
+        var failed = 0
+        if (deep) {
+            val targets = container.downloadDao.all()
+                .filter {
+                    it.status != DOWNLOAD_STATUS_RUNNING &&
+                        it.status != DOWNLOAD_STATUS_QUEUED &&
+                        it.needsMetadata()
+                }
+                .take(MANUAL_ENRICH_LIMIT)
+            _scanProgress.value = ScanProgress(
+                running = true,
+                enriching = true,
+                total = targets.size,
+            )
+            for ((index, target) in targets.withIndex()) {
+                try {
+                    enrichOne(target.galleryId, localPageCounts[target.galleryId])
+                    enriched++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ApiException.Network) {
+                    // 反代没开 / 网络断了：后面的请求同样会失败，直接结束补全。
+                    failed += targets.size - index
+                    break
+                } catch (e: Exception) {
+                    failed++
+                }
+                _scanProgress.value = ScanProgress(
+                    running = true,
+                    enriching = true,
+                    processed = index + 1,
+                    total = targets.size,
+                )
+            }
+        }
+
+        val pending = container.downloadDao.all().count { it.needsMetadata() }
+        return ScanReport(
+            imported = imported,
+            matched = matched,
+            enriched = enriched,
+            failed = failed,
+            pendingMetadata = pending,
+        )
+    }
+
+    private suspend fun buildImportedEntity(
+        gallery: DownloadStorage.LocalGallery,
+        now: Long,
+    ): DownloadEntity {
+        val favorite = runCatching { container.favoriteDao.find(gallery.galleryId) }.getOrNull()
+        val history = runCatching { container.historyDao.find(gallery.galleryId) }.getOrNull()
+        val knownTotal = favorite?.numPages?.takeIf { it > 0 }
+            ?: history?.numPages?.takeIf { it > 0 }
+        // 没有远端总页数时，用最大页号判断是否下完：1,2,5 页说明缺页，不能当 3/3 已完成。
+        val total = maxOf(knownTotal ?: 0, gallery.maxPage)
+        val done = minOf(gallery.pageCount, total)
+        // 没有可信的总页数时不能宣称「已完成」：截断下载 0001..0050 看起来也是连续的。
+        // 先保持可继续状态，等手动扫描从 API 拿到 numPages 再判断。
+        val complete = knownTotal != null && total > 0 && done >= total
+        return DownloadEntity(
+            galleryId = gallery.galleryId,
+            title = favorite?.title?.takeIf { it.isNotBlank() }
+                ?: history?.title?.takeIf { it.isNotBlank() }
+                ?: "#${gallery.galleryId}",
+            thumbPath = favorite?.thumbPath?.takeIf { it.isNotBlank() }
+                ?: history?.thumbPath?.takeIf { it.isNotBlank() }
+                ?: gallery.cover.orEmpty(),
+            totalPages = total,
+            donePages = done,
+            status = if (complete) DOWNLOAD_STATUS_DONE else DOWNLOAD_STATUS_PAUSED,
+            pagesJson = EMPTY_PAGES_JSON,
+            createdAt = gallery.lastModified.takeIf { it > 0 } ?: now,
+            updatedAt = now,
+            error = null,
+            bytes = gallery.bytes,
+            artistsJson = null,
+            categoriesJson = null,
+            origin = DOWNLOAD_ORIGIN_SCAN,
+        )
+    }
+
+    /** 把磁盘上的实际页数同步进已有记录；只改数值，不删文件、不动进行中的任务。 */
+    private suspend fun mergeScanned(
+        entity: DownloadEntity,
+        gallery: DownloadStorage.LocalGallery,
+        now: Long,
+    ): DownloadEntity {
+        val total = entity.totalPages.coerceAtLeast(gallery.maxPage)
+        val done = minOf(gallery.pageCount, total)
+        // 扫描导入且尚未补全元数据的条目，totalPages 只是「本地最大页号」，
+        // 不能据此升级为 DONE；等 API 确认总页数后再判断，避免把截断下载当完整。
+        val totalConfirmed = !entity.isImported || !entity.isMissingMetadata
+        val status = when {
+            total > 0 && done >= total && totalConfirmed -> DOWNLOAD_STATUS_DONE
+            entity.status == DOWNLOAD_STATUS_DONE -> DOWNLOAD_STATUS_PAUSED
+            else -> entity.status
+        }
+        var title = entity.title
+        var thumb = entity.thumbPath
+        if (title.isBlank() || title == "#${gallery.galleryId}" || thumb.isBlank()) {
+            val favorite = runCatching { container.favoriteDao.find(gallery.galleryId) }.getOrNull()
+            val history = runCatching { container.historyDao.find(gallery.galleryId) }.getOrNull()
+            title = favorite?.title?.takeIf { it.isNotBlank() }
+                ?: history?.title?.takeIf { it.isNotBlank() }
+                ?: title
+            thumb = favorite?.thumbPath?.takeIf { it.isNotBlank() }
+                ?: history?.thumbPath?.takeIf { it.isNotBlank() }
+                ?: thumb
+        }
+        val updated = entity.copy(
+            title = title,
+            thumbPath = thumb,
+            totalPages = total,
+            donePages = done,
+            status = status,
+            bytes = gallery.bytes,
+            error = if (status == DOWNLOAD_STATUS_DONE) null else entity.error,
+        )
+        return if (updated != entity) updated.copy(updatedAt = now) else entity
+    }
+
+    /** 从服务端补全一部漫画的元数据，并按本地实际页数重算状态。 */
+    private suspend fun enrichOne(galleryId: Long, localPageCount: Int?) {
+        val before = container.downloadDao.find(galleryId) ?: return
+        if (before.status == DOWNLOAD_STATUS_RUNNING || before.status == DOWNLOAD_STATUS_QUEUED) return
+        val detail = container.galleries.detail(galleryId)
+        val ui = detail.ui
+        // 网络请求期间用户可能点了继续下载：以最新状态为准，且不覆盖进行中的任务。
+        val latest = container.downloadDao.find(galleryId) ?: return
+        if (latest.status == DOWNLOAD_STATUS_RUNNING || latest.status == DOWNLOAD_STATUS_QUEUED) return
+        val total = ui.numPages.takeIf { it > 0 } ?: latest.totalPages
+        // 只有本次扫描真的读到了这个目录才调整进度；SAF 被卸载 / 权限被回收时
+        // countExisting 会返回 0，不能据此把已完成的任务降级。
+        val done = if (localPageCount != null) {
+            minOf(localPageCount, total)
+        } else {
+            latest.donePages
+        }
+        val status = if (localPageCount != null) {
+            when {
+                total > 0 && done >= total -> DOWNLOAD_STATUS_DONE
+                latest.status == DOWNLOAD_STATUS_DONE -> DOWNLOAD_STATUS_PAUSED
+                else -> latest.status
+            }
+        } else {
+            latest.status
+        }
+        container.downloadDao.upsert(
+            latest.copy(
+                title = ui.title,
+                thumbPath = ui.thumbPath,
+                totalPages = total,
+                donePages = done,
+                status = status,
+                error = if (status == DOWNLOAD_STATUS_DONE) null else latest.error,
+                artistsJson = encodeNameList(ui.tags.filter { it.type == "artist" }.map { it.name }),
+                categoriesJson = encodeNameList(ui.tags.filter { it.type == "category" }.map { it.name }),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
     private suspend fun runTask(galleryId: Long) {
-        val entity = container.downloadDao.find(galleryId)
+        try {
+            runTaskInner(galleryId)
+        } finally {
+            jobs.remove(galleryId)
+        }
+    }
+
+    private suspend fun runTaskInner(galleryId: Long) {
+        var entity = container.downloadDao.find(galleryId)
         android.util.Log.i("DownloadRepo", "runTask id=" + galleryId + " status=" + entity?.status)
         if (entity == null) return
         if (entity.status == DOWNLOAD_STATUS_DONE) return
         container.downloadDao.setStatus(galleryId, DOWNLOAD_STATUS_RUNNING, System.currentTimeMillis())
-        val paths = decodePaths(entity.pagesJson)
+        var paths = decodePaths(entity.pagesJson)
+        var loadFailure: Throwable? = null
         if (paths.isEmpty()) {
+            // 扫描导入的记录没有远端页地址：续传前先向服务端要一次页列表与元数据。
+            val result = runCatching { container.galleries.detail(galleryId) }
+            loadFailure = result.exceptionOrNull()
+            val resolved = result.getOrNull()
+            if (resolved != null && resolved.pages.isNotEmpty()) {
+                paths = resolved.pages.map { it.path }
+                entity = entity.copy(
+                    title = resolved.ui.title,
+                    thumbPath = resolved.ui.thumbPath,
+                    totalPages = paths.size,
+                    pagesJson = encodePaths(paths),
+                    artistsJson = encodeNameList(
+                        resolved.ui.tags.filter { it.type == "artist" }.map { it.name },
+                    ),
+                    categoriesJson = encodeNameList(
+                        resolved.ui.tags.filter { it.type == "category" }.map { it.name },
+                    ),
+                )
+                container.downloadDao.upsert(entity)
+            }
+        }
+        if (paths.isEmpty()) {
+            // 导入条目只是缺一份在线页列表：网络问题下保持「可继续」，别误标成失败。
+            val transient = loadFailure is ApiException.Network || loadFailure is ApiException.RateLimited
+            val keepResumable = entity.isImported && transient
             container.downloadDao.upsert(
                 entity.copy(
-                    status = DOWNLOAD_STATUS_FAILED,
-                    error = AppLocale.strings().messages.pageListEmpty,
+                    status = if (keepResumable) DOWNLOAD_STATUS_PAUSED else DOWNLOAD_STATUS_FAILED,
+                    error = if (keepResumable) {
+                        AppLocale.strings().messages.needNetworkForPages
+                    } else {
+                        AppLocale.strings().messages.pageListEmpty
+                    },
                     updatedAt = System.currentTimeMillis(),
                 ),
             )
@@ -268,8 +635,6 @@ class DownloadRepository(private val container: AppContainer) {
                     error = e.message ?: AppLocale.strings().messages.downloadFailed,
                 ),
             )
-        } finally {
-            jobs.remove(galleryId)
         }
     }
 
@@ -358,6 +723,10 @@ class DownloadRepository(private val container: AppContainer) {
 
     companion object {
         private const val INTERVAL_MS = 400L
+        /** 手动扫描单次最多补全的条目数（API 限流 12 次/分钟，避免一次跑太久）。 */
+        private const val MANUAL_ENRICH_LIMIT = 24
+        private const val AUTO_SCAN_INTERVAL_MS = 5 * 60_000L
+        private const val EMPTY_PAGES_JSON = "{\"pages\":[]}"
 
         fun statusLabel(status: String): String = when (status) {
             DOWNLOAD_STATUS_QUEUED -> AppLocale.strings().messages.statusQueued
@@ -369,3 +738,7 @@ class DownloadRepository(private val container: AppContainer) {
         }
     }
 }
+
+/** 作者 / 分类尚未补全（旧版本记录或刚扫描导入）。 */
+private fun DownloadEntity.needsMetadata(): Boolean =
+    artistsJson == null || categoriesJson == null

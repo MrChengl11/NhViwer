@@ -34,7 +34,7 @@ interface FavoriteDao {
 
 @Dao
 interface DownloadDao {
-    @Query("SELECT * FROM downloads ORDER BY createdAt DESC")
+    @Query("SELECT * FROM downloads ORDER BY createdAt DESC, galleryId DESC")
     fun observeAll(): Flow<List<DownloadEntity>>
 
     @Query("SELECT * FROM downloads WHERE galleryId = :id LIMIT 1")
@@ -64,6 +64,10 @@ interface DownloadDao {
 interface HistoryDao {
     @Query("SELECT * FROM history ORDER BY updatedAt DESC LIMIT :limit")
     fun observeRecent(limit: Int = 100): Flow<List<HistoryEntity>>
+
+    /** 扫描本地目录时，用历史记录补全标题 / 封面。 */
+    @Query("SELECT * FROM history WHERE galleryId = :id LIMIT 1")
+    suspend fun find(id: Long): HistoryEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: HistoryEntity)

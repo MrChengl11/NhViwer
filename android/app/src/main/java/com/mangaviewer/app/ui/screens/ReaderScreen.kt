@@ -105,12 +105,26 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
     LaunchedEffect(galleryId) {
         error = null
         // 优先离线：已下载的页面直接用本地文件 / 自定义目录里的 content:// URI。
-        val localPages = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            container.downloads.localPages(galleryId)
+        val (localPages, localEntity) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            container.downloads.localPages(galleryId) to container.downloadDao.find(galleryId)
         }
         if (localPages.isNotEmpty()) {
             paths = localPages
-            title = title.ifBlank { s.reader.localReading }
+            title = localEntity?.title?.takeIf { it.isNotBlank() }
+                ?: title.ifBlank { s.reader.localReading }
+            // 用下载记录构造一个最小 GalleryUi，让本地阅读也能继续写历史进度。
+            galleryUi = localEntity?.let {
+                GalleryUi(
+                    id = it.galleryId,
+                    mediaId = 0L,
+                    title = it.title,
+                    subtitle = null,
+                    thumbPath = it.thumbPath,
+                    numPages = localPages.size,
+                    numFavorites = 0L,
+                    uploadDate = null,
+                )
+            }
             return@LaunchedEffect
         }
         runCatching { container.galleries.detail(galleryId) }

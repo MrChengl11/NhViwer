@@ -58,7 +58,31 @@ internal class DownloadStorage(
 
     // ---------------- 查询 ----------------
 
-    private data class Doc(val uri: Uri, val name: String, val mime: String?, val size: Long)
+    private data class Doc(
+        val uri: Uri,
+        val name: String,
+        val mime: String?,
+        val size: Long,
+        /** 部分 DocumentsProvider 不返回 SIZE；未知不等于空文件。 */
+        val sizeKnown: Boolean,
+        val lastModified: Long,
+    ) {
+        val hasContent: Boolean
+            get() = mime != Document.MIME_TYPE_DIR && if (sizeKnown) size > 0L else true
+    }
+
+    /** 扫描结果：一个本地漫画目录（内部目录或 SAF 目录）里实际存在的内容。 */
+    data class LocalGallery(
+        val galleryId: Long,
+        val pageCount: Int,
+        /** 目录里最大的页号（页号有缺口时用它判断是否下完）。 */
+        val maxPage: Int,
+        val bytes: Long,
+        /** 最早一页的修改时间，用作「下载日期」；取不到时退回目录时间。 */
+        val lastModified: Long,
+        /** 最低页号文件的本地路径 / content URI，用作补全前的封面。 */
+        val cover: String?,
+    )
 
     private fun rootDocUri(tree: Uri): Uri =
         DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
@@ -76,6 +100,7 @@ internal class DownloadStorage(
                 Document.COLUMN_DISPLAY_NAME,
                 Document.COLUMN_MIME_TYPE,
                 Document.COLUMN_SIZE,
+                Document.COLUMN_LAST_MODIFIED,
             ),
             null,
             null,
@@ -88,6 +113,8 @@ internal class DownloadStorage(
                     name = c.getString(1).orEmpty(),
                     mime = c.getString(2),
                     size = if (c.isNull(3)) 0L else c.getLong(3),
+                    sizeKnown = !c.isNull(3),
+                    lastModified = if (c.isNull(4)) 0L else c.getLong(4),
                 )
             }
         }
@@ -112,7 +139,7 @@ internal class DownloadStorage(
     // ---------------- 读取 ----------------
 
     private fun indexOf(name: String): Int? =
-        PAGE_NAME.find(name)?.groupValues?.get(1)?.toIntOrNull()
+        PAGE_NAME.find(name)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it >= 1 }
 
     /** 某部漫画本地已有的页面，按页号排序；内部路径 / content:// URI 混排。 */
     fun localSources(galleryId: Long): List<String> {
@@ -125,7 +152,7 @@ internal class DownloadStorage(
             findGalleryDir(tree, galleryId)?.let { dir ->
                 docs(dir).forEach { d ->
                     val index = indexOf(d.name) ?: return@forEach
-                    if (d.size > 0L) merged.putIfAbsent(index, d.uri.toString())
+                    if (d.hasContent) merged.putIfAbsent(index, d.uri.toString())
                 }
             }
         }
@@ -137,8 +164,72 @@ internal class DownloadStorage(
         if (file.length() > 0L) return true
         return readTrees().any { tree ->
             val dir = findGalleryDir(tree, galleryId) ?: return@any false
-            docs(dir).any { it.name == pageName(index) && it.size > 0L }
+            docs(dir).any { it.name == pageName(index) && it.hasContent }
         }
+    }
+
+    /**
+     * 扫描「应用私有目录 + 所有历史 SAF 目录」里实际存在的漫画子目录。
+     *
+     * - 只认 `<galleryId>/0001.jpg` 这种由本应用写出的目录结构；
+     * - 同一部漫画可能同时出现在多个目录，按页号去重合并（与阅读顺序一致）；
+     * - 目录里一页都没有时忽略；读取失败（SAF 权限被回收）按空处理，不抛异常；
+     * - 只读：绝不删除或改写任何文件。
+     */
+    fun scanLocalGalleries(): List<LocalGallery> {
+        val pageSizes = HashMap<Long, MutableMap<Int, Long>>()
+        val covers = HashMap<Long, Pair<Int, String>>()
+        val earliest = HashMap<Long, Long>()
+        val dirModified = HashMap<Long, Long>()
+
+        fun record(id: Long, index: Int, size: Long, location: String, modified: Long) {
+            pageSizes.getOrPut(id) { HashMap() }.putIfAbsent(index, size)
+            val cover = covers[id]
+            if (cover == null || index < cover.first) covers[id] = index to location
+            if (modified > 0L) {
+                earliest[id] = minOf(earliest[id] ?: Long.MAX_VALUE, modified)
+            }
+        }
+
+        internalRoot.listFiles().orEmpty().forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            val id = dir.name.toLongOrNull() ?: return@forEach
+            dir.listFiles().orEmpty().forEach { file ->
+                val index = indexOf(file.name) ?: return@forEach
+                if (file.length() > 0L) {
+                    record(id, index, file.length(), file.absolutePath, file.lastModified())
+                }
+            }
+            dirModified[id] = maxOf(dirModified[id] ?: 0L, dir.lastModified())
+        }
+
+        readTrees().forEach { tree ->
+            docs(rootDocUri(tree)).forEach child@{ child ->
+                if (child.mime != Document.MIME_TYPE_DIR) return@child
+                val id = child.name.toLongOrNull() ?: return@child
+                docs(child.uri).forEach file@{ file ->
+                    if (file.mime == Document.MIME_TYPE_DIR) return@file
+                    val index = indexOf(file.name) ?: return@file
+                    if (file.hasContent) {
+                        record(id, index, file.size.coerceAtLeast(0L), file.uri.toString(), file.lastModified)
+                    }
+                }
+                if (child.lastModified > 0L) {
+                    dirModified[id] = maxOf(dirModified[id] ?: 0L, child.lastModified)
+                }
+            }
+        }
+
+        return pageSizes.mapNotNull { (id, pages) ->
+            if (pages.isEmpty()) null else LocalGallery(
+                galleryId = id,
+                pageCount = pages.size,
+                maxPage = pages.keys.maxOrNull() ?: pages.size,
+                bytes = pages.values.sum(),
+                lastModified = earliest[id] ?: dirModified[id] ?: 0L,
+                cover = covers[id]?.second,
+            )
+        }.sortedByDescending { it.lastModified }
     }
 
     fun countExisting(galleryId: Long, total: Int): Int {
@@ -148,7 +239,7 @@ internal class DownloadStorage(
         }
         readTrees().forEach { tree ->
             findGalleryDir(tree, galleryId)?.let { dir ->
-                docs(dir).forEach { d -> indexOf(d.name)?.let { if (d.size > 0L) present += it } }
+                docs(dir).forEach { d -> indexOf(d.name)?.let { if (d.hasContent) present += it } }
             }
         }
         return present.count { it in 1..total }
@@ -157,7 +248,9 @@ internal class DownloadStorage(
     fun galleryBytes(galleryId: Long): Long {
         var sum = internalGalleryDir(galleryId).listFiles()?.sumOf { it.length() } ?: 0L
         readTrees().forEach { tree ->
-            findGalleryDir(tree, galleryId)?.let { dir -> sum += docs(dir).sumOf { it.size } }
+            findGalleryDir(tree, galleryId)?.let { dir ->
+                sum += docs(dir).sumOf { if (it.sizeKnown) it.size else 0L }
+            }
         }
         return sum
     }
@@ -226,6 +319,10 @@ internal class DownloadStorage(
     private fun pageName(index: Int): String = "%04d.jpg".format(index)
 
     private companion object {
-        val PAGE_NAME = Regex("""^(\d{4})\.jpg$""")
+        /**
+         * 读取 / 扫描时放宽到 1–6 位页码与常见图片扩展名，便于识别用户手动放进目录的页面；
+         * 应用自己写入仍固定使用 `%04d.jpg`。
+         */
+        val PAGE_NAME = Regex("""^(\d{1,6})\.(?:jpe?g|png|webp)$""", RegexOption.IGNORE_CASE)
     }
 }

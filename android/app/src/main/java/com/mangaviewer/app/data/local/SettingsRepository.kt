@@ -16,6 +16,9 @@ private val Context.dataStore by preferencesDataStore(name = "manga-settings")
 
 enum class ReaderLayout { PAGED_HORIZONTAL, PAGED_DOUBLE, PAGED_VERTICAL, CONTINUOUS }
 
+/** 下载页的展示方式：紧凑列表（详情多）或封面网格（找得快）。 */
+enum class DownloadsViewMode { LIST, GRID }
+
 enum class ImageQuality(val query: String) {
     ORIGINAL(""),
     HIGH("?max=1600"),
@@ -51,6 +54,8 @@ data class Settings(
     val downloadTree: String = "",
     /** 历史选择过的下载目录（SAF tree URI），用于继续读取旧目录里已下载的内容。 */
     val downloadTrees: List<String> = emptyList(),
+    /** 下载页展示方式，持久化后冷启动保持上次选择。 */
+    val downloadsViewMode: DownloadsViewMode = DownloadsViewMode.LIST,
 ) {
     /**
      * 实际的 API 根地址。直连模式固定走官网，反代模式走用户在设置里填的地址。
@@ -95,6 +100,7 @@ class SettingsRepository(private val context: Context) {
         val DIRECT_MODE = booleanPreferencesKey("direct_mode")
         val DOWNLOAD_TREE = stringPreferencesKey("download_tree")
         val DOWNLOAD_TREES = stringSetPreferencesKey("download_trees")
+        val DOWNLOADS_VIEW = stringPreferencesKey("downloads_view_mode")
     }
 
     val settingsFlow: Flow<Settings> = context.dataStore.data.map { p ->
@@ -118,6 +124,8 @@ class SettingsRepository(private val context: Context) {
             directMode = p[Keys.DIRECT_MODE] ?: false,
             downloadTree = p[Keys.DOWNLOAD_TREE] ?: "",
             downloadTrees = (p[Keys.DOWNLOAD_TREES] ?: emptySet()).toList(),
+            downloadsViewMode = DownloadsViewMode.entries.firstOrNull { it.name == p[Keys.DOWNLOADS_VIEW] }
+                ?: DownloadsViewMode.LIST,
         )
     }
 
@@ -139,6 +147,9 @@ class SettingsRepository(private val context: Context) {
     suspend fun setPreferJapaneseTitle(value: Boolean) = edit { it[Keys.JP_TITLE] = value }
     suspend fun setShowPageNumber(value: Boolean) = edit { it[Keys.PAGE_NUMBER] = value }
     suspend fun setForegroundDownloads(value: Boolean) = edit { it[Keys.FOREGROUND_DOWNLOADS] = value }
+
+    /** 切换下载页列表 / 网格视图（持久化，冷启动恢复）。 */
+    suspend fun setDownloadsViewMode(value: DownloadsViewMode) = edit { it[Keys.DOWNLOADS_VIEW] = value.name }
 
     /** 切换连接方式：直连 / 本地反代。切换后下一次请求即生效（图片拦截器每次读取）。 */
     suspend fun setDirectMode(value: Boolean) = edit { it[Keys.DIRECT_MODE] = value }

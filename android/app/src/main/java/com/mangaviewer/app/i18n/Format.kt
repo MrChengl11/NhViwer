@@ -21,6 +21,18 @@ fun UiStrings.pageOfTotal(page: Int, total: Int): String = fmt(reader.pageOfTota
 
 // ---- 下载 / 收藏 ----
 fun UiStrings.downloadsTitle(count: Int): String = fmt(downloads.title, count)
+fun UiStrings.scanResult(imported: Int, matched: Int, enriched: Int): String =
+    fmt(downloads.scanResult, imported, matched, enriched)
+fun UiStrings.scanFailed(count: Int): String = fmt(downloads.scanFailed, count)
+fun UiStrings.enriching(done: Int, total: Int): String = fmt(downloads.enriching, done, total)
+fun UiStrings.pendingInfo(count: Int): String = fmt(downloads.pendingInfo, count)
+fun UiStrings.filterDateRange(from: String, to: String): String = fmt(downloads.dateRange, from, to)
+fun UiStrings.moreActionsFor(title: String): String = fmt(downloads.moreActionsFor, title)
+fun UiStrings.removeDownloadTitle(title: String): String = fmt(downloads.removeConfirmTitle, title)
+fun UiStrings.removeDownloadBody(files: Int, size: String): String =
+    fmt(downloads.removeConfirmBody, files, size)
+fun UiStrings.removeImportedBody(files: Int, size: String): String =
+    fmt(downloads.removeImportedBody, files, size)
 fun UiStrings.favoritesTitle(count: Int): String = fmt(favorites.title, count)
 fun UiStrings.selectedCount(count: Int): String = fmt(favorites.selectedN, count)
 fun UiStrings.allCount(count: Int): String = fmt(favorites.allN, count)

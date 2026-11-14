@@ -41,7 +41,14 @@ fun GalleryThumb(
     contentDescription: String? = null,
 ) {
     val s = LocalStrings.current
-    val model = ImageProxyInterceptor.candidates(path, thumb = true).firstOrNull()
+    // 空路径显示占位；扫描导入的条目在补全前用第一页的本地文件 / content URI 当封面；
+    // 其余才是 nhentai 图床路径（需要多主机候选与反代改写）。
+    val model: Any? = when {
+        path.isBlank() -> null
+        path.startsWith("content://") || path.startsWith("file://") -> path
+        path.startsWith("/") -> java.io.File(path)
+        else -> ImageProxyInterceptor.candidates(path, thumb = true).firstOrNull()
+    }
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
