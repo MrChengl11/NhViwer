@@ -32,7 +32,7 @@ UI 使用 Google **Material Design 3（Expressive：大圆角、动态取色、�
 | 图片 | Coil 3.6.3 | 自定义 Interceptor：直连或走本地反代，多图床后备 |
 | 后台 | 前台服务（DATA_SYNC 类型） | 下载进度常驻通知 |
 
-规模：**43 个 Kotlin 文件 / 8900+ 行**，debug APK 22.5 MB（22,461,593 字节，v1.0.7）。
+规模：**43 个 Kotlin 文件 / 8900+ 行**，debug APK 22.5 MB（22,462,232 字节，v1.0.7）。
 
 ## 2. 架构总览
 
@@ -138,7 +138,7 @@ targetSdk 37 下 Android 13+ 必须**运行时申请** `POST_NOTIFICATIONS`，�
 
 最新版见 GitHub Releases：<https://github.com/MrChengl11/NhViwer/releases>
 
-- `Nhviwer-1.0.7.apk` — v1.0.7（versionCode 7，debug 签名，22,461,593 字节，sha256 `b8051a2fad8ac26935626c76829b5d0ea038f6f893029c948f31999beb3894d8`）
+- `Nhviwer-1.0.7.apk` — v1.0.7（versionCode 7，debug 签名，22,462,232 字节，sha256 `455b1e023a513833c5bdb70f2e3d94421ceab5f5ac75c0beeb96e90f2ef0e0f6`）
 - 客户端不含任何内容、也不内置代理：请在「设置」里选择「直连」（设备已挂代理）或「本地反代」（`node tools/nhentai-proxy.mjs`，默认 `http://127.0.0.1:8787`）
 - 从源码构建：`cd android && ./gradlew :app:assembleDebug`
 
