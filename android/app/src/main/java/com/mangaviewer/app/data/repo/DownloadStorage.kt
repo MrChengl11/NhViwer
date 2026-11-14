@@ -159,13 +159,23 @@ internal class DownloadStorage(
         return merged.values.toList()
     }
 
-    fun exists(galleryId: Long, index: Int): Boolean {
-        val file = File(internalGalleryDir(galleryId), pageName(index))
-        if (file.length() > 0L) return true
-        return readTrees().any { tree ->
-            val dir = findGalleryDir(tree, galleryId) ?: return@any false
-            docs(dir).any { it.name == pageName(index) && it.hasContent }
+    fun exists(galleryId: Long, index: Int): Boolean =
+        existingIndices(galleryId).contains(index)
+
+    /** 一次列出本地已有的页号集合（内部 + 所有 SAF 树），续传前用它代替逐页查询。 */
+    fun existingIndices(galleryId: Long): Set<Int> {
+        val present = HashSet<Int>()
+        internalGalleryDir(galleryId).listFiles().orEmpty().forEach { file ->
+            indexOf(file.name)?.let { if (file.length() > 0L) present += it }
         }
+        readTrees().forEach { tree ->
+            findGalleryDir(tree, galleryId)?.let { dir ->
+                docs(dir).forEach { d ->
+                    indexOf(d.name)?.let { if (d.hasContent) present += it }
+                }
+            }
+        }
+        return present
     }
 
     /**
@@ -232,18 +242,8 @@ internal class DownloadStorage(
         }.sortedByDescending { it.lastModified }
     }
 
-    fun countExisting(galleryId: Long, total: Int): Int {
-        val present = HashSet<Int>()
-        internalGalleryDir(galleryId).listFiles()?.forEach { f ->
-            indexOf(f.name)?.let { if (f.length() > 0L) present += it }
-        }
-        readTrees().forEach { tree ->
-            findGalleryDir(tree, galleryId)?.let { dir ->
-                docs(dir).forEach { d -> indexOf(d.name)?.let { if (d.hasContent) present += it } }
-            }
-        }
-        return present.count { it in 1..total }
-    }
+    fun countExisting(galleryId: Long, total: Int): Int =
+        existingIndices(galleryId).count { it in 1..total }
 
     fun galleryBytes(galleryId: Long): Long {
         var sum = internalGalleryDir(galleryId).listFiles()?.sumOf { it.length() } ?: 0L
@@ -290,13 +290,24 @@ internal class DownloadStorage(
         }.getOrDefault(false)
     }
 
-    fun deleteGallery(galleryId: Long) {
-        internalGalleryDir(galleryId).deleteRecursively()
+    /**
+     * 删除某部漫画的文件；返回是否全部删除成功。
+     * SAF 目录删除失败时返回 false，调用方应保留数据库行，让用户重试，
+     * 而不是留一个下次扫描又会「复活」的幽灵记录。
+     */
+    fun deleteGallery(galleryId: Long): Boolean {
+        var ok = true
+        val internal = internalGalleryDir(galleryId)
+        if (internal.exists() && !internal.deleteRecursively()) ok = false
         readTrees().forEach { tree ->
             findGalleryDir(tree, galleryId)?.let { dir ->
-                runCatching { DocumentsContract.deleteDocument(resolver, dir) }
+                val deleted = runCatching {
+                    DocumentsContract.deleteDocument(resolver, dir)
+                }.getOrDefault(false)
+                if (!deleted) ok = false
             }
         }
+        return ok
     }
 
     fun cleanupOrphans(validIds: Set<Long>) {

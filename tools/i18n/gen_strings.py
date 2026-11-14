@@ -162,7 +162,7 @@ SECTIONS = [
         ("infoFailed", "Could not load info", "信息获取失败"),
         ("removeConfirmTitle", "Remove “%1$s”?", "移除「%1$s」？"),
         ("removeConfirmBody", "Deletes %1$d file(s) (%2$s) from this device. This cannot be undone.", "将从设备删除 %1$d 个文件（%2$s），无法撤销。"),
-        ("removeImportedBody", "This folder was found on your device. Deletes %1$d file(s) (%2$s). This cannot be undone.", "此目录是在设备上发现的，将删除 %1$d 个文件（%2$s），无法撤销。"),
+        ("removeImportedBody", "This folder was found on your device. Deletes the entire folder (%1$d page(s), %2$s), including any other files inside. This cannot be undone.", "此目录是在设备上发现的，将删除整个目录（%1$d 页，%2$s），包括目录中的其他文件，无法撤销。"),
     ]),
     ("favorites", [
         ("title", "Favorites (%1$d)", "收藏（%1$d）"),
@@ -336,6 +336,7 @@ SECTIONS = [
         ("statusDone", "Completed", "已完成"),
         ("statusFailed", "Failed", "失败"),
         ("cannotCreateDir", "Cannot create manga folder", "无法创建漫画目录"),
+        ("deleteFailed", "Could not delete all files. Check folder permissions and try again.", "未能删除全部文件，请检查目录权限后重试"),
     ]),
     ("service", [
         ("preparing", "Preparing download…", "准备下载…"),

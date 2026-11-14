@@ -430,7 +430,8 @@ fun DownloadsScreen(container: AppContainer, navController: NavController) {
                 TextButton(onClick = {
                     val id = entity.galleryId
                     pendingRemove = null
-                    scope.launch { container.downloads.remove(id) }
+                    // remove() 内部用仓库作用域：离开下载页也不会把删除流程打断。
+                    container.downloads.remove(id)
                 }) { Text(s.common.delete) }
             },
             dismissButton = {

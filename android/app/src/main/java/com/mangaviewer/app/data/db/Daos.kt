@@ -46,6 +46,14 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = :status, updatedAt = :now WHERE galleryId = :id")
     suspend fun setStatus(id: Long, status: String, now: Long)
 
+    /** 暂停时只改仍处于活跃状态的行，避免覆盖刚完成的 DONE 或已被删除的记录。 */
+    @Query("UPDATE downloads SET status = 'PAUSED', updatedAt = :now WHERE galleryId = :id AND status IN ('RUNNING','QUEUED')")
+    suspend fun markPausedIfActive(id: Long, now: Long)
+
+    /** 冷启动复位：只改活跃行，附带一次已完成页数校正，不整行覆盖元数据。 */
+    @Query("UPDATE downloads SET status = 'PAUSED', donePages = :done, updatedAt = :now WHERE galleryId = :id AND status IN ('RUNNING','QUEUED')")
+    suspend fun resetInterrupted(id: Long, done: Int, now: Long)
+
     @Query("DELETE FROM downloads WHERE galleryId = :id")
     suspend fun delete(id: Long)
 

@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,10 +35,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /** 本地目录扫描的实时进度（UI 顶部的细进度条用），结束后带上一次性结果。 */
@@ -73,7 +76,10 @@ data class ScanReport(
 class DownloadRepository(private val container: AppContainer) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val jobs = HashMap<Long, Job>()
+    private val jobs = ConcurrentHashMap<Long, Job>()
+
+    /** 已从列表移除的 id；扫描期间即使拿到旧快照也不要重新导入。 */
+    private val removedIds = ConcurrentHashMap.newKeySet<Long>()
 
     /** 设置页选择的自定义下载目录（SAF tree URI）；空 = 应用私有目录。 */
     @Volatile
@@ -130,6 +136,7 @@ class DownloadRepository(private val container: AppContainer) {
 
     suspend fun enqueue(ui: GalleryUi, pagePaths: List<String>) {
         val now = System.currentTimeMillis()
+        removedIds.remove(ui.id)
         val existing = container.downloadDao.find(ui.id)
         container.downloadDao.upsert(
             DownloadEntity(
@@ -154,31 +161,50 @@ class DownloadRepository(private val container: AppContainer) {
 
     fun start(galleryId: Long) {
         if (jobs[galleryId]?.isActive == true) return
-        jobs[galleryId] = scope.launch { runTask(galleryId) }
+        // 先登记 Job 再启动，避免任务瞬间完成时 runTask 的 finally 找不到自己的表项。
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) { runTask(galleryId) }
+        jobs[galleryId] = job
+        job.start()
     }
 
-    /** 暂停：取消协程并立刻把状态落成 PAUSED（runTask 的 finally 负责，这里只置兜底）。 */
+    /**
+     * 暂停：取消协程并立刻把状态落成 PAUSED。
+     * 不清 jobs 表：让 remove() 还能拿到这个 Job 并等它真正退出；
+     * runTask 的 finally 会按 Job 身份移除自己的表项，不会误删重启后的新任务。
+     */
     fun pause(galleryId: Long) {
-        val job = jobs.remove(galleryId)
-        job?.cancel()
+        jobs[galleryId]?.cancel()
         scope.launch {
-            val entity = container.downloadDao.find(galleryId) ?: return@launch
-            if (entity.status == DOWNLOAD_STATUS_RUNNING || entity.status == DOWNLOAD_STATUS_QUEUED) {
-                container.downloadDao.upsert(
-                    entity.copy(
-                        donePages = countExisting(galleryId, entity.totalPages),
-                        status = DOWNLOAD_STATUS_PAUSED,
-                        updatedAt = System.currentTimeMillis(),
-                    ),
-                )
-            }
+            container.downloadDao.markPausedIfActive(galleryId, System.currentTimeMillis())
         }
     }
 
-    suspend fun remove(galleryId: Long) {
-        jobs.remove(galleryId)?.cancel()
-        withContext(Dispatchers.IO) { storage.deleteGallery(galleryId) }
-        container.downloadDao.delete(galleryId)
+    /**
+     * 删除：在仓库作用域里先等取消的下载协程退出，再删文件 / 数据库行。
+     * 避免 OkHttp 阻塞请求在删除完成后又把图片写回目录，导致下次扫描「复活」。
+     * 同时把 id 放进 removedIds，扫描拿到旧快照也不会重新导入。
+     */
+    fun remove(galleryId: Long) {
+        removedIds.add(galleryId)
+        scope.launch {
+            jobs.remove(galleryId)?.cancelAndJoin()
+            val deleted = withContext(Dispatchers.IO) { storage.deleteGallery(galleryId) }
+            if (deleted) {
+                container.downloadDao.delete(galleryId)
+            } else {
+                // 删除失败时保留记录，行上的错误提示让用户检查目录权限后重试。
+                removedIds.remove(galleryId)
+                val entity = container.downloadDao.find(galleryId)
+                if (entity != null) {
+                    container.downloadDao.upsert(
+                        entity.copy(
+                            error = AppLocale.strings().messages.deleteFailed,
+                            updatedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     fun pauseAll() {
@@ -207,8 +233,10 @@ class DownloadRepository(private val container: AppContainer) {
 
     fun startPaused() {
         scope.launch {
+            // 用户显式点「全部继续」时连 pending 的缺页 / 网络错误一起重试；
+            // 之前 error != null 的过滤会让「联网后点继续」的扫描条目被静默跳过。
             container.downloadDao.all()
-                .filter { it.status == DOWNLOAD_STATUS_PAUSED && it.error == null }
+                .filter { it.status == DOWNLOAD_STATUS_PAUSED }
                 .forEach { start(it.galleryId) }
         }
     }
@@ -229,12 +257,11 @@ class DownloadRepository(private val container: AppContainer) {
         val all = container.downloadDao.all()
         all.filter { it.status == DOWNLOAD_STATUS_RUNNING || it.status == DOWNLOAD_STATUS_QUEUED }
             .forEach { entity ->
-                container.downloadDao.upsert(
-                    entity.copy(
-                        donePages = countExisting(entity.galleryId, entity.totalPages),
-                        status = DOWNLOAD_STATUS_PAUSED,
-                        updatedAt = System.currentTimeMillis(),
-                    ),
+                // 列级 UPDATE + 状态守卫，避免整行 REPLACE 覆盖并发补全的元数据。
+                container.downloadDao.resetInterrupted(
+                    id = entity.galleryId,
+                    done = countExisting(entity.galleryId, entity.totalPages),
+                    now = System.currentTimeMillis(),
                 )
             }
         Unit
@@ -328,6 +355,11 @@ class DownloadRepository(private val container: AppContainer) {
         _scanProgress.value = ScanProgress(running = true, total = local.size)
 
         for ((index, gallery) in local.withIndex()) {
+            // 扫描期间用户可能刚删掉这一本：旧快照不能再把它导回来。
+            if (gallery.galleryId in removedIds) {
+                _scanProgress.value = ScanProgress(running = true, processed = index + 1, total = local.size)
+                continue
+            }
             val latest = container.downloadDao.find(gallery.galleryId)
             when {
                 latest == null -> {
@@ -450,14 +482,17 @@ class DownloadRepository(private val container: AppContainer) {
         gallery: DownloadStorage.LocalGallery,
         now: Long,
     ): DownloadEntity {
-        val total = entity.totalPages.coerceAtLeast(gallery.maxPage)
+        // 已有记录的总页数是可信的（收藏 / 历史 / API 写入过）；本地最大页号只在
+        // totalPages 缺失时兜底，避免用户多放一张图就把已完成的任务改成「缺页」。
+        val total = if (entity.totalPages > 0) entity.totalPages else gallery.maxPage
         val done = minOf(gallery.pageCount, total)
-        // 扫描导入且尚未补全元数据的条目，totalPages 只是「本地最大页号」，
-        // 不能据此升级为 DONE；等 API 确认总页数后再判断，避免把截断下载当完整。
+        // 扫描导入且尚未补全元数据的条目，totalPages 可能只是「本地最大页号」，
+        // 不能据此升级为 DONE；但已经 DONE 的记录不要因为元数据为空而回退。
         val totalConfirmed = !entity.isImported || !entity.isMissingMetadata
         val status = when {
-            total > 0 && done >= total && totalConfirmed -> DOWNLOAD_STATUS_DONE
-            entity.status == DOWNLOAD_STATUS_DONE -> DOWNLOAD_STATUS_PAUSED
+            total > 0 && done >= total &&
+                (totalConfirmed || entity.status == DOWNLOAD_STATUS_DONE) -> DOWNLOAD_STATUS_DONE
+            entity.status == DOWNLOAD_STATUS_DONE && done < total -> DOWNLOAD_STATUS_PAUSED
             else -> entity.status
         }
         var title = entity.title
@@ -508,7 +543,12 @@ class DownloadRepository(private val container: AppContainer) {
                 else -> latest.status
             }
         } else {
-            latest.status
+            // 读不到本地页数时只做「单向升级」：确认总页数后，原本 N/N 的条目
+            // 可以补成 DONE，但绝不因为这次读不到文件而降级。
+            when {
+                total > 0 && latest.donePages >= total -> DOWNLOAD_STATUS_DONE
+                else -> latest.status
+            }
         }
         container.downloadDao.upsert(
             latest.copy(
@@ -526,10 +566,13 @@ class DownloadRepository(private val container: AppContainer) {
     }
 
     private suspend fun runTask(galleryId: Long) {
+        val self = coroutineContext[Job]
         try {
             runTaskInner(galleryId)
         } finally {
-            jobs.remove(galleryId)
+            // 按 Job 身份移除：pause 后用户可能已经为同一 id 启动了新任务，
+            // 旧任务退出时不能把新任务的表项删掉。
+            if (self != null) jobs.remove(galleryId, self) else jobs.remove(galleryId)
         }
     }
 
@@ -582,7 +625,9 @@ class DownloadRepository(private val container: AppContainer) {
         }
         val concurrency = container.settings.settingsFlow.first().concurrentDownloads.coerceIn(1, 8)
         val semaphore = Semaphore(concurrency)
-        val done = AtomicInteger(countExisting(galleryId, paths.size))
+        // 一次列出已有页号，避免每页都重新枚举所有 SAF 目录（也兼容 1.png 等非标准页名）。
+        val presentPages = storage.existingIndices(galleryId)
+        val done = AtomicInteger(presentPages.count { it in 1..paths.size })
         val failed = AtomicInteger(0)
         val progress = ProgressWriter(galleryId, entity, paths.size, done)
         try {
@@ -590,7 +635,7 @@ class DownloadRepository(private val container: AppContainer) {
                 paths.forEachIndexed { index, path ->
                     launch {
                         semaphore.withPermit {
-                            if (!storage.exists(galleryId, index + 1)) {
+                            if ((index + 1) !in presentPages) {
                                 if (fetch(path, galleryId, index + 1)) {
                                     done.incrementAndGet()
                                 } else {

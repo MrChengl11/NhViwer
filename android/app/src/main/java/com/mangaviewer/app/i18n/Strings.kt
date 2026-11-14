@@ -335,6 +335,7 @@ data class MessagesStrings(
     val statusDone: String,
     val statusFailed: String,
     val cannotCreateDir: String,
+    val deleteFailed: String,
 )
 
 data class ServiceStrings(
@@ -511,7 +512,7 @@ val EnStrings = UiStrings(
         infoFailed = "Could not load info",
         removeConfirmTitle = "Remove “%1\$s”?",
         removeConfirmBody = "Deletes %1\$d file(s) (%2\$s) from this device. This cannot be undone.",
-        removeImportedBody = "This folder was found on your device. Deletes %1\$d file(s) (%2\$s). This cannot be undone.",
+        removeImportedBody = "This folder was found on your device. Deletes the entire folder (%1\$d page(s), %2\$s), including any other files inside. This cannot be undone.",
     ),
     favorites = FavoritesStrings(
         title = "Favorites (%1\$d)",
@@ -669,6 +670,7 @@ val EnStrings = UiStrings(
         statusDone = "Completed",
         statusFailed = "Failed",
         cannotCreateDir = "Cannot create manga folder",
+        deleteFailed = "Could not delete all files. Check folder permissions and try again.",
     ),
     service = ServiceStrings(
         preparing = "Preparing download…",
@@ -823,7 +825,7 @@ val ZhStrings = UiStrings(
         infoFailed = "信息获取失败",
         removeConfirmTitle = "移除「%1\$s」？",
         removeConfirmBody = "将从设备删除 %1\$d 个文件（%2\$s），无法撤销。",
-        removeImportedBody = "此目录是在设备上发现的，将删除 %1\$d 个文件（%2\$s），无法撤销。",
+        removeImportedBody = "此目录是在设备上发现的，将删除整个目录（%1\$d 页，%2\$s），包括目录中的其他文件，无法撤销。",
     ),
     favorites = FavoritesStrings(
         title = "收藏（%1\$d）",
@@ -981,6 +983,7 @@ val ZhStrings = UiStrings(
         statusDone = "已完成",
         statusFailed = "失败",
         cannotCreateDir = "无法创建漫画目录",
+        deleteFailed = "未能删除全部文件，请检查目录权限后重试",
     ),
     service = ServiceStrings(
         preparing = "准备下载…",
