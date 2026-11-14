@@ -8,8 +8,6 @@ UI 使用 Google **Material Design 3（Expressive：大圆角、动态取色、�
 
 原生 Android：**Kotlin + Jetpack Compose**，单 Activity + Compose Navigation。
 
-应用名 **Nhviwer**（包名 `com.mangaviewer.app`），图标沿用 EhViewer 的视觉风格：teal `#009688` 圆角方块 + 白色衬线字母「Nh」+ 45° 向右下的长投影，同时提供圆形图标与 Android 8+ 自适应图标（前景/背景分层）。
-
 > ⚠️ **免责与合规声明**
 > 1. 本项目仅用于**技术学习与研究**（Android / Compose / M3 设计语言的工程实践），不提供、不托管、不分发任何漫画内容。
 > 2. 所有图片与数据均来自公开的第三方 API，版权归原作者与平台所有；请遵守所在地区法律法规与目标站点服务条款。
