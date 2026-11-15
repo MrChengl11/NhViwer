@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import com.mangaviewer.app.data.db.AppDatabase
 import com.mangaviewer.app.data.db.MIGRATION_1_2
+import com.mangaviewer.app.data.db.MIGRATION_2_3
+import com.mangaviewer.app.data.db.MIGRATION_3_4
 import com.mangaviewer.app.data.local.SettingsRepository
 import com.mangaviewer.app.data.remote.AuthStore
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
@@ -19,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -37,7 +40,7 @@ class AppContainer(context: Context) {
         AppDatabase::class.java,
         "manga.db",
     )
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
         .build()
 
     val favoriteDao = database.favoriteDao()
@@ -81,4 +84,9 @@ class AppContainer(context: Context) {
     val comments: CommentRepository by lazy { CommentRepository(this) }
     val history: HistoryRepository by lazy { HistoryRepository(this) }
     val tagIndex: TagIndexRepository by lazy { TagIndexRepository(this) }
+
+    init {
+        // 冷启动回填旧收藏缺失的作者信息：只用本地下载记录里的元数据，不联网。
+        appScope.launch { runCatching { favorites.backfillMetadataFromDownloads() } }
+    }
 }

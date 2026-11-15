@@ -58,8 +58,8 @@ import androidx.navigation.NavController
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.mangaviewer.app.data.AppContainer
-import com.mangaviewer.app.data.local.ImageQuality
 import com.mangaviewer.app.data.local.ReaderLayout
+import com.mangaviewer.app.data.local.ReaderStartMode
 import com.mangaviewer.app.data.model.GalleryUi
 import com.mangaviewer.app.data.remote.ImageProxyInterceptor
 import com.mangaviewer.app.i18n.LocalStrings
@@ -79,6 +79,8 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
     val settings = settingsState ?: return
     var paths by remember { mutableStateOf<List<String>?>(null) }
     var title by remember { mutableStateOf("") }
+    // 实际起始页下标（0-based）。initialPage >= 1 由调用方指定；0 表示交给「阅读器行为」设置决定。
+    var startIndex by remember(galleryId) { mutableIntStateOf(-1) }
     // 保留画廊 UI 模型，用于在翻页/滚动时持续更新阅读进度。
     var galleryUi by remember { mutableStateOf<GalleryUi?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -104,6 +106,17 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
 
     LaunchedEffect(galleryId) {
         error = null
+        // 起始页：明确指定了页码就照办；page=0 时按设置决定「接着上次读」还是「从头读」。
+        startIndex = if (initialPage >= 1) {
+            initialPage - 1
+        } else {
+            val lastName = container.historyDao.find(galleryId)?.lastPage
+            if (settings.readerStartMode == ReaderStartMode.RESUME && lastName != null && lastName > 0) {
+                lastName
+            } else {
+                0
+            }
+        }
         // 优先离线：已下载的页面直接用本地文件 / 自定义目录里的 content:// URI。
         val (localPages, localEntity) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             container.downloads.localPages(galleryId) to container.downloadDao.find(galleryId)
@@ -132,7 +145,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                 paths = d.pages.map { it.path }
                 title = d.ui.title
                 galleryUi = d.ui
-                runCatching { container.history.record(d.ui, initialPage - 1, d.pages.size) }
+                runCatching { container.history.record(d.ui, startIndex.coerceAtLeast(0), d.pages.size) }
             }
             .onFailure { error = it.message ?: s.common.loadFailed }
     }
@@ -193,7 +206,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
             list == null -> LoadingBox()
             list.isEmpty() -> Text(s.reader.noPages, color = Color.White, modifier = Modifier.align(Alignment.Center))
             else -> {
-                val start = (initialPage - 1).coerceIn(0, list.lastIndex)
+                val start = startIndex.coerceIn(0, list.lastIndex)
                 val uiSnapshot = galleryUi
                 // 翻页/滚动 400ms 防抖后写一次阅读进度，历史页即可显示真实进度。
                 val recordPage: (Int) -> Unit = { pageIndex ->
@@ -237,7 +250,6 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                     PageImage(
                                         path = list[first],
                                         container = container,
-                                        quality = settings.imageQuality,
                                         isLocal = isLocalPath(list[first]),
                                         preload = settings.preloadCount,
                                         refreshKey = refreshKeyFor(first),
@@ -251,8 +263,7 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                         PageImage(
                                             path = list[first + 1],
                                             container = container,
-                                            quality = settings.imageQuality,
-                                            isLocal = isLocalPath(list[first + 1]),
+                                                isLocal = isLocalPath(list[first + 1]),
                                             preload = settings.preloadCount,
                                             refreshKey = refreshKeyFor(first + 1),
                                             index = first + 1,
@@ -301,7 +312,6 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                 PageImage(
                                     path = list[page],
                                     container = container,
-                                    quality = settings.imageQuality,
                                     isLocal = isLocalPath(list[page]),
                                     preload = settings.preloadCount,
                                     refreshKey = refreshKeyFor(page),
@@ -341,7 +351,6 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                             PageImage(
                                 path = list[page],
                                 container = container,
-                                quality = settings.imageQuality,
                                 isLocal = isLocalPath(list[page]),
                                 preload = settings.preloadCount,
                                 refreshKey = refreshKeyFor(page),
@@ -379,7 +388,6 @@ fun ReaderScreen(container: AppContainer, galleryId: Long, initialPage: Int, nav
                                 PageImage(
                                     path = path,
                                     container = container,
-                                    quality = settings.imageQuality,
                                     isLocal = isLocalPath(path),
                                     preload = settings.preloadCount,
                                     refreshKey = refreshKeyFor(index),
@@ -496,7 +504,6 @@ private fun isLocalPath(path: String): Boolean =
 private fun PageImage(
     path: String,
     container: AppContainer,
-    quality: ImageQuality,
     isLocal: Boolean,
     preload: Int,
     index: Int,
@@ -507,9 +514,8 @@ private fun PageImage(
     // 在线页有多个图床候选：i* 在本机常年 520，失败时自动换到 t*，避免整屏黑。
     // refreshKey 变化时重建候选与失败计数，让「刷新当前页」从第一个图床重新开始。
     val s = LocalStrings.current
-    val candidates = remember(path, isLocal, quality, refreshKey) {
-        if (isLocal) listOf<String>(path)
-        else ImageProxyInterceptor.viewerCandidates(path) { x -> x + quality.query }
+    val candidates = remember(path, isLocal, refreshKey) {
+        if (isLocal) listOf<String>(path) else ImageProxyInterceptor.candidates(path, thumb = false)
     }
     var hostIndex by remember(path, refreshKey) { mutableIntStateOf(0) }
     val model = remember(candidates, hostIndex, isLocal) {

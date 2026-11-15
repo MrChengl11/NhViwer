@@ -2,6 +2,7 @@ package com.mangaviewer.app.data.model
 import com.mangaviewer.app.i18n.AppLocale
 
 
+import com.mangaviewer.app.data.db.encodeNameList
 import com.mangaviewer.app.data.remote.dto.CommentDto
 import com.mangaviewer.app.data.remote.dto.GalleryDetailDto
 import com.mangaviewer.app.data.remote.dto.GalleryListItemDto
@@ -62,6 +63,20 @@ fun GalleryDetailDto.toUi(preferJapanese: Boolean = false): GalleryUi = GalleryU
 )
 
 fun TagDto.toUi(): TagUi = TagUi(id = id, type = type, name = name, count = count)
+
+/**
+ * 作者标签名编码成 JSON 数组，供收藏 / 下载按作者筛选。
+ * 返回 null 表示「这次拿到的数据里没有作者信息」（≠ 没有作者），调用方不要覆盖已有值。
+ */
+fun GalleryUi.artistsJson(): String? = tagNamesJson("artist")
+
+/** 分类标签名编码成 JSON 数组（收藏筛选「分类」用）；null 的含义同 [artistsJson]。 */
+fun GalleryUi.categoriesJson(): String? = tagNamesJson("category")
+
+private fun GalleryUi.tagNamesJson(type: String): String? {
+    val names = tags.filter { it.type == type }.map { it.name }
+    return if (names.isEmpty()) null else encodeNameList(names)
+}
 
 fun CommentDto.toUi(): CommentUi = CommentUi(
     id = id,

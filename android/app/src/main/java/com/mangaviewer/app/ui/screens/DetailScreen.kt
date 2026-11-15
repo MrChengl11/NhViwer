@@ -79,7 +79,12 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
         loading = true
         error = null
         runCatching { container.galleries.detail(galleryId) }
-            .onSuccess { detail = it; favorite = container.favorites.isFavorite(galleryId) }
+            .onSuccess {
+                detail = it
+                favorite = container.favorites.isFavorite(galleryId)
+                // 顺手补全收藏记录的作者 / 分类信息（收藏页筛选用）。
+                runCatching { container.favorites.fillMetadata(it.ui) }
+            }
             .onFailure { error = it.message ?: s.common.loadFailed }
         loading = false
     }
@@ -164,7 +169,8 @@ fun DetailScreen(container: AppContainer, galleryId: Long, navController: NavCon
                     item {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
-                                onClick = { navController.navigate("reader/${d.ui.id}?page=1") },
+                                // page=0：起始位置交给「阅读器行为」设置（从头 / 接着上次读）。
+                                onClick = { navController.navigate("reader/${d.ui.id}?page=0") },
                                 modifier = Modifier.weight(1f),
                             ) { Text(s.detail.startReading) }
                             OutlinedButton(

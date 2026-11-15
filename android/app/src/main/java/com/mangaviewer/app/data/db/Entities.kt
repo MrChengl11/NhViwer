@@ -28,7 +28,19 @@ data class FavoriteEntity(
     val numFavorites: Long,
     val folder: String = DEFAULT_FOLDER,
     val addedAt: Long,
-)
+    /** 作者名 JSON 数组（收藏页按作者筛选用）；null = 尚未补全（旧数据 / 接口没带标签）。 */
+    val artistsJson: String? = null,
+    /** 分类名 JSON 数组（收藏页按分类筛选用）；null = 尚未补全。 */
+    val categoriesJson: String? = null,
+) {
+    /** 作者列表；null / 损坏数据回退为空列表。 */
+    val artists: List<String>
+        get() = decodeNameList(artistsJson)
+
+    /** 分类列表；null / 损坏数据回退为空列表。 */
+    val categories: List<String>
+        get() = decodeNameList(categoriesJson)
+}
 
 @Entity(tableName = "downloads", indices = [Index("galleryId")])
 data class DownloadEntity(

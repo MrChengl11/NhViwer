@@ -41,6 +41,7 @@ fun UiStrings.bulkOk(count: Int): String = fmt(favorites.bulkOk, count)
 fun UiStrings.bulkMixed(ok: Int, failed: Int): String = fmt(favorites.bulkMixed, ok, failed)
 fun UiStrings.confirmRemove(count: Int): String = fmt(favorites.confirmRemove, count)
 fun UiStrings.removedCount(count: Int): String = fmt(favorites.removedN, count)
+fun UiStrings.addedOn(date: String): String = fmt(favorites.addedOn, date)
 
 // ---- 账号 ----
 fun UiStrings.syncDone(pulled: Int, pushed: Int): String = fmt(account.syncDone, pulled, pushed)

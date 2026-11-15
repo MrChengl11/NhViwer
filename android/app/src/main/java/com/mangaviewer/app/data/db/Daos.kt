@@ -28,6 +28,73 @@ interface FavoriteDao {
     @Query("SELECT * FROM favorites")
     suspend fun all(): List<FavoriteEntity>
 
+    /**
+     * 账号同步用：本地还没有这条收藏时才插入。
+     * 不能再用整行 REPLACE：那会把并发补全的作者 / 分类列覆盖回旧快照。
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(entity: FavoriteEntity)
+
+    /** 账号同步用：只刷新展示字段，绝不碰文件夹、加入时间与作者 / 分类列。 */
+    @Query(
+        """
+        UPDATE favorites SET title = :title, prettyTitle = :prettyTitle, thumbPath = :thumbPath,
+            numPages = :numPages, numFavorites = :numFavorites
+        WHERE galleryId = :id
+        """,
+    )
+    suspend fun updateDisplay(
+        id: Long,
+        title: String,
+        prettyTitle: String?,
+        thumbPath: String,
+        numPages: Int,
+        numFavorites: Long,
+    )
+
+    /** 只在本地缺作者时补上（单条 UPDATE 原子完成，不会覆盖并发写入的新值）。 */
+    @Query("UPDATE favorites SET artistsJson = :json WHERE galleryId = :id AND artistsJson IS NULL")
+    suspend fun fillArtistsIfMissing(id: Long, json: String)
+
+    /** 只在本地缺分类时补上。 */
+    @Query("UPDATE favorites SET categoriesJson = :json WHERE galleryId = :id AND categoriesJson IS NULL")
+    suspend fun fillCategoriesIfMissing(id: Long, json: String)
+
+    /**
+     * 旧收藏补全作者：用下载记录里已抓到的作者信息回填（只填空缺，不覆盖已有值）。
+     * 下载页的扫描 / 补全流程本来就会写 artistsJson，这里直接复用，不额外发请求。
+     */
+    @Query(
+        """
+        UPDATE favorites SET artistsJson = (
+            SELECT d.artistsJson FROM downloads d
+            WHERE d.galleryId = favorites.galleryId AND d.artistsJson IS NOT NULL
+            LIMIT 1
+        )
+        WHERE artistsJson IS NULL AND EXISTS (
+            SELECT 1 FROM downloads d
+            WHERE d.galleryId = favorites.galleryId AND d.artistsJson IS NOT NULL
+        )
+        """,
+    )
+    suspend fun backfillArtistsFromDownloads()
+
+    /** 同上，补分类。 */
+    @Query(
+        """
+        UPDATE favorites SET categoriesJson = (
+            SELECT d.categoriesJson FROM downloads d
+            WHERE d.galleryId = favorites.galleryId AND d.categoriesJson IS NOT NULL
+            LIMIT 1
+        )
+        WHERE categoriesJson IS NULL AND EXISTS (
+            SELECT 1 FROM downloads d
+            WHERE d.galleryId = favorites.galleryId AND d.categoriesJson IS NOT NULL
+        )
+        """,
+    )
+    suspend fun backfillCategoriesFromDownloads()
+
     @Query("SELECT folder, COUNT(*) AS total FROM favorites GROUP BY folder")
     fun observeFolderCounts(): Flow<List<FolderCount>>
 }

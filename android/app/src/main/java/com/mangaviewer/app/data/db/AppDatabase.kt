@@ -10,7 +10,7 @@ import androidx.room.RoomDatabase
         HistoryEntity::class,
         CommentDraftEntity::class,
     ],
-    version = 2,
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

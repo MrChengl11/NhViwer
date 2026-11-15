@@ -16,3 +16,21 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("ALTER TABLE `downloads` ADD COLUMN `origin` TEXT")
     }
 }
+
+/**
+ * v2 -> v3：收藏记录增加作者元数据（收藏页筛选作者用）。
+ *
+ * 列允许 NULL，旧收藏保持 null（「尚未补全」）；之后从下载记录、详情页标签或账号同步补全。
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `favorites` ADD COLUMN `artistsJson` TEXT")
+    }
+}
+
+/** v3 -> v4：收藏记录再补分类元数据（收藏页筛选器与下载页同款：日期 / 首字母 / 作者 / 分类）。 */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `favorites` ADD COLUMN `categoriesJson` TEXT")
+    }
+}

@@ -37,8 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mangaviewer.app.data.AppContainer
-import com.mangaviewer.app.data.local.ImageQuality
 import com.mangaviewer.app.data.local.ReaderLayout
+import com.mangaviewer.app.data.local.ReaderStartMode
 import com.mangaviewer.app.data.local.Settings
 import com.mangaviewer.app.i18n.AppLanguage
 import com.mangaviewer.app.i18n.LocalStrings
@@ -261,15 +261,23 @@ fun SettingsScreen(container: AppContainer, navController: NavController) {
                 valueRange = 1f..8f,
                 steps = 6,
             )
-            Text(s.settings.quality, style = MaterialTheme.typography.labelMedium)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ImageQuality.entries.forEach { quality ->
-                    FilterChip(
-                        selected = cfg.imageQuality == quality,
-                        onClick = { scope.launch { container.settings.setQuality(quality) } },
-                        label = { Text(qualityLabel(quality, s)) },
-                    )
-                }
+            Text(s.settings.readerBehavior, style = MaterialTheme.typography.labelMedium)
+            Text(
+                s.settings.readerBehaviorDesc,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = cfg.readerStartMode == ReaderStartMode.RESUME,
+                    onClick = { scope.launch { container.settings.setReaderStartMode(ReaderStartMode.RESUME) } },
+                    label = { Text(s.settings.startResume) },
+                )
+                FilterChip(
+                    selected = cfg.readerStartMode == ReaderStartMode.BEGINNING,
+                    onClick = { scope.launch { container.settings.setReaderStartMode(ReaderStartMode.BEGINNING) } },
+                    label = { Text(s.settings.startBeginning) },
+                )
             }
 
             SectionTitle(s.settings.sectionAppearance)
@@ -359,9 +367,3 @@ private fun layoutLabel(layout: ReaderLayout, s: UiStrings): String = when (layo
     ReaderLayout.CONTINUOUS -> s.settings.layoutContinuous
 }
 
-private fun qualityLabel(quality: ImageQuality, s: UiStrings): String = when (quality) {
-    ImageQuality.ORIGINAL -> s.settings.qualityOriginal
-    ImageQuality.HIGH -> s.settings.qualityHigh
-    ImageQuality.MEDIUM -> s.settings.qualityMedium
-    ImageQuality.LOW -> s.settings.qualityLow
-}

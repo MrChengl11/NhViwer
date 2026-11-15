@@ -53,14 +53,10 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DateRangePicker
-import androidx.compose.material3.DateRangePickerState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
@@ -121,11 +117,6 @@ import com.mangaviewer.app.i18n.scanResult
 import com.mangaviewer.app.ui.components.EmptyBox
 import com.mangaviewer.app.ui.components.GalleryThumb
 import kotlinx.coroutines.launch
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 
 private data class DownloadBucket(val key: String, val label: String, val items: List<DownloadEntity>)
 
@@ -136,8 +127,6 @@ private val BUCKET_ORDER = listOf(
     DOWNLOAD_STATUS_FAILED,
     DOWNLOAD_STATUS_DONE,
 )
-
-private val INITIALS: List<String> = listOf("#") + ('A'..'Z').map { it.toString() }
 
 private fun bucketLabel(key: String, s: UiStrings): String = when (key) {
     DOWNLOAD_STATUS_RUNNING -> s.downloads.filterRunning
@@ -734,10 +723,26 @@ private fun DownloadFilterSheet(
                     onClick = { onFilterChange(filter.copy(fromMillis = null, toMillis = null)) },
                     label = { Text(s.downloads.dateAll) },
                 )
-                DatePresetChip(filter, today, s.downloads.dateToday, onFilterChange)
-                DatePresetChip(filter, last7, s.downloads.date7, onFilterChange)
-                DatePresetChip(filter, last30, s.downloads.date30, onFilterChange)
-                DatePresetChip(filter, thisYear, s.downloads.dateYear, onFilterChange)
+                DatePresetChip(
+                    selected = filter.fromMillis == today.from && filter.toMillis == today.to,
+                    label = s.downloads.dateToday,
+                    onClick = { onFilterChange(filter.copy(fromMillis = today.from, toMillis = today.to)) },
+                )
+                DatePresetChip(
+                    selected = filter.fromMillis == last7.from && filter.toMillis == last7.to,
+                    label = s.downloads.date7,
+                    onClick = { onFilterChange(filter.copy(fromMillis = last7.from, toMillis = last7.to)) },
+                )
+                DatePresetChip(
+                    selected = filter.fromMillis == last30.from && filter.toMillis == last30.to,
+                    label = s.downloads.date30,
+                    onClick = { onFilterChange(filter.copy(fromMillis = last30.from, toMillis = last30.to)) },
+                )
+                DatePresetChip(
+                    selected = filter.fromMillis == thisYear.from && filter.toMillis == thisYear.to,
+                    label = s.downloads.dateYear,
+                    onClick = { onFilterChange(filter.copy(fromMillis = thisYear.from, toMillis = thisYear.to)) },
+                )
                 FilterChip(
                     selected = customSelected,
                     onClick = { showDatePicker = true },
@@ -846,7 +851,10 @@ private fun DownloadFilterSheet(
     }
 
     if (showDatePicker) {
-        DownloadDateRangeDialog(
+        FilterDateRangeDialog(
+            title = s.downloads.filterDate,
+            rangeTitle = s.downloads.dateRangeTitle,
+            doneText = s.downloads.sheetDone,
             initialFrom = filter.fromMillis,
             initialTo = filter.toMillis,
             onDismiss = { showDatePicker = false },
@@ -858,204 +866,23 @@ private fun DownloadFilterSheet(
     }
 }
 
-@Composable
-private fun DatePresetChip(
-    filter: DownloadFilter,
-    range: DateRange,
-    label: String,
-    onFilterChange: (DownloadFilter) -> Unit,
-) {
-    FilterChip(
-        selected = filter.fromMillis == range.from && filter.toMillis == range.to,
-        onClick = { onFilterChange(filter.copy(fromMillis = range.from, toMillis = range.to)) },
-        label = { Text(label) },
-    )
-}
-
-@Composable
-private fun FilterSectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-    )
-}
-
-@Composable
-private fun FilterHint(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(vertical = 4.dp),
-    )
-}
-
-@Composable
-private fun FilterDivider() {
-    HorizontalDivider(modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DownloadDateRangeDialog(
-    initialFrom: Long?,
-    initialTo: Long?,
-    onConfirm: (Long, Long) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val s = LocalStrings.current
-    // DatePicker 内部月份 / 星期跟随 state.locale；显式按应用语言创建，
-    // 避免系统中文 + 应用英文出现中英混排。
-    val state = remember(s.language) {
-        DateRangePickerState(
-            locale = s.language.locale,
-            initialSelectedStartDateMillis = initialFrom?.let(::localStartToUtcDate),
-            initialSelectedEndDateMillis = initialTo?.let { localStartToUtcDate(it - 1) },
-        )
-    }
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                enabled = state.selectedStartDateMillis != null,
-                onClick = {
-                    val start = state.selectedStartDateMillis ?: return@TextButton
-                    val end = state.selectedEndDateMillis ?: start
-                    val from = utcDateToLocalStart(start)
-                    val to = utcDateToLocalStart(end).let { endStart ->
-                        Instant.ofEpochMilli(endStart)
-                            .atZone(ZoneId.systemDefault())
-                            .toLocalDate()
-                            .plusDays(1)
-                            .atStartOfDay(ZoneId.systemDefault())
-                            .toInstant()
-                            .toEpochMilli()
-                    }
-                    onConfirm(from, to)
-                },
-            ) {
-                Text(s.downloads.sheetDone)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(s.common.cancel) }
-        },
-    ) {
-        DateRangePicker(
-            state = state,
-            showModeToggle = false,
-            modifier = Modifier.weight(1f),
-            title = {
-                Text(
-                    s.downloads.filterDate,
-                    modifier = Modifier.padding(start = 24.dp, top = 16.dp),
-                )
-            },
-            headline = {
-                val start = state.selectedStartDateMillis
-                val end = state.selectedEndDateMillis
-                val label = when {
-                    start == null -> s.downloads.dateRangeTitle
-                    end == null -> formatUtcDate(start)
-                    else -> s.filterDateRange(formatUtcDate(start), formatUtcDate(end))
-                }
-                Text(
-                    label,
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                )
-            },
-        )
-    }
-}
-
 private data class FilterFacets(
     val artists: List<String>,
     val categories: List<String>,
     val statusCounts: List<Pair<String, Int>>,
 )
 
-private data class DateRange(val from: Long, val to: Long)
+private fun downloadDateLabels(s: UiStrings) = DateFilterLabels(
+    all = s.downloads.dateAll,
+    today = s.downloads.dateToday,
+    days7 = s.downloads.date7,
+    days30 = s.downloads.date30,
+    year = s.downloads.dateYear,
+    rangeLine = { from, to -> s.filterDateRange(from, to) },
+)
 
-private fun Set<String>.toggle(value: String): Set<String> =
-    if (value in this) this - value else this + value
-
-private fun titleInitial(title: String): String {
-    // 全角字母先归一化（Ａ -> A），再跳过开头的括号 / 标点，取第一个字母或数字。
-    val normalized = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFKC)
-    for (ch in normalized) {
-        if (ch.isDigit()) return "#"
-        if (ch.isLetter()) {
-            val upper = ch.uppercaseChar()
-            return if (upper in 'A'..'Z') upper.toString() else "#"
-        }
-    }
-    return "#"
-}
-
-private fun startOfDay(date: LocalDate): Long =
-    date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-
-private fun presetToday(): DateRange {
-    val today = LocalDate.now()
-    return DateRange(startOfDay(today), startOfDay(today.plusDays(1)))
-}
-
-private fun presetDays(days: Long): DateRange {
-    val today = LocalDate.now()
-    return DateRange(startOfDay(today.minusDays(days - 1)), startOfDay(today.plusDays(1)))
-}
-
-private fun presetYear(): DateRange {
-    val today = LocalDate.now()
-    return DateRange(startOfDay(today.withDayOfYear(1)), startOfDay(today.plusDays(1)))
-}
-
-private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-
-/** DateRangePicker 给的是 UTC 零点；headline 里按「用户选的那一天」原样显示。 */
-private fun formatUtcDate(utcMillis: Long): String =
-    Instant.ofEpochMilli(utcMillis).atZone(ZoneOffset.UTC).toLocalDate().format(DATE_FORMAT)
-
-private fun dateFilterLabel(filter: DownloadFilter, s: UiStrings): String {
-    val from = filter.fromMillis ?: return s.downloads.dateAll
-    val presets = listOf(
-        presetToday() to s.downloads.dateToday,
-        presetDays(7) to s.downloads.date7,
-        presetDays(30) to s.downloads.date30,
-        presetYear() to s.downloads.dateYear,
-    )
-    presets.firstOrNull { filter.fromMillis == it.first.from && filter.toMillis == it.first.to }
-        ?.let { return it.second }
-    val fromText = Instant.ofEpochMilli(from)
-        .atZone(ZoneId.systemDefault())
-        .toLocalDate()
-        .format(DATE_FORMAT)
-    val to = filter.toMillis ?: return s.filterDateRange(fromText, "…")
-    val toText = Instant.ofEpochMilli((to - 1).coerceAtLeast(from))
-        .atZone(ZoneId.systemDefault())
-        .toLocalDate()
-        .format(DATE_FORMAT)
-    return s.filterDateRange(fromText, toText)
-}
-
-private fun localStartToUtcDate(localMillis: Long): Long =
-    Instant.ofEpochMilli(localMillis)
-        .atZone(ZoneId.systemDefault())
-        .toLocalDate()
-        .atStartOfDay(ZoneOffset.UTC)
-        .toInstant()
-        .toEpochMilli()
-
-private fun utcDateToLocalStart(utcMillis: Long): Long =
-    Instant.ofEpochMilli(utcMillis)
-        .atZone(ZoneOffset.UTC)
-        .toLocalDate()
-        .atStartOfDay(ZoneId.systemDefault())
-        .toInstant()
-        .toEpochMilli()
+private fun dateFilterLabel(filter: DownloadFilter, s: UiStrings): String =
+    dateFilterLabel(filter.fromMillis, filter.toMillis, downloadDateLabels(s))
 
 @Composable
 private fun DownloadRow(

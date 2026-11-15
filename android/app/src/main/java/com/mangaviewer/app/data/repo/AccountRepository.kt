@@ -5,6 +5,8 @@ import com.mangaviewer.app.i18n.AppLocale
 import com.mangaviewer.app.data.AppContainer
 import com.mangaviewer.app.data.db.DEFAULT_FOLDER
 import com.mangaviewer.app.data.db.FavoriteEntity
+import com.mangaviewer.app.data.model.artistsJson
+import com.mangaviewer.app.data.model.categoriesJson
 import com.mangaviewer.app.data.model.toUi
 import com.mangaviewer.app.data.remote.ApiException
 import com.mangaviewer.app.data.remote.AuthState
@@ -102,8 +104,9 @@ class AccountRepository(private val container: AppContainer) {
 
         var pulled = 0
         for (ui in remote) {
-            val existing = container.favoriteDao.find(ui.id)
-            container.favoriteDao.upsert(
+            // 不存在才插入；已存在的行只刷新展示字段 —— 文件夹、加入时间、作者 / 分类都不动。
+            // 这样详情页并发补全的元数据不会被同步的旧快照整行覆盖。
+            container.favoriteDao.insertIfAbsent(
                 FavoriteEntity(
                     galleryId = ui.id,
                     title = ui.title,
@@ -111,10 +114,22 @@ class AccountRepository(private val container: AppContainer) {
                     thumbPath = ui.thumbPath,
                     numPages = ui.numPages,
                     numFavorites = ui.numFavorites,
-                    folder = existing?.folder ?: DEFAULT_FOLDER,
-                    addedAt = existing?.addedAt ?: System.currentTimeMillis(),
+                    folder = DEFAULT_FOLDER,
+                    addedAt = System.currentTimeMillis(),
+                    artistsJson = ui.artistsJson(),
+                    categoriesJson = ui.categoriesJson(),
                 ),
             )
+            container.favoriteDao.updateDisplay(
+                id = ui.id,
+                title = ui.title,
+                prettyTitle = ui.subtitle,
+                thumbPath = ui.thumbPath,
+                numPages = ui.numPages,
+                numFavorites = ui.numFavorites,
+            )
+            ui.artistsJson()?.let { container.favoriteDao.fillArtistsIfMissing(ui.id, it) }
+            ui.categoriesJson()?.let { container.favoriteDao.fillCategoriesIfMissing(ui.id, it) }
             pulled++
             _sync.value = SyncState.Running(pulled)
         }

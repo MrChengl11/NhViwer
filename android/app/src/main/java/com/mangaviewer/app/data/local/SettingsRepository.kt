@@ -19,12 +19,11 @@ enum class ReaderLayout { PAGED_HORIZONTAL, PAGED_DOUBLE, PAGED_VERTICAL, CONTIN
 /** 下载页的展示方式：紧凑列表（详情多）或封面网格（找得快）。 */
 enum class DownloadsViewMode { LIST, GRID }
 
-enum class ImageQuality(val query: String) {
-    ORIGINAL(""),
-    HIGH("?max=1600"),
-    MEDIUM("?max=1080"),
-    LOW("?max=720"),
-}
+/** 收藏页的展示方式，与下载页各自独立记忆。 */
+enum class FavoritesViewMode { LIST, GRID }
+
+/** 打开阅读器时的起始位置：接着上次的页数读 / 每次从头读。 */
+enum class ReaderStartMode { RESUME, BEGINNING }
 
 data class Settings(
     /** 界面语言。产品默认英语，简体中文需要在设置里手动切换。 */
@@ -34,7 +33,8 @@ data class Settings(
     val readerLayout: ReaderLayout = ReaderLayout.PAGED_HORIZONTAL,
     val readerRtl: Boolean = true,
     val preloadCount: Int = 3,
-    val imageQuality: ImageQuality = ImageQuality.ORIGINAL,
+    /** 默认接着上次的进度继续；设为 BEGINNING 时每次从第 1 页开始。 */
+    val readerStartMode: ReaderStartMode = ReaderStartMode.RESUME,
     val darkMode: Boolean = false,
     val dynamicColor: Boolean = true,
     val seedColor: Long = 0xFF6750A4,
@@ -44,18 +44,20 @@ data class Settings(
     /** 下载器：是否常驻前台服务，锁屏/切后台也继续下。 */
     val foregroundDownloads: Boolean = true,
     /**
-     * 连接方式：true = 直连（设备自己挂了代理/TUN，直接访问 nhentai.net）；
-     * false = 经宿主本地反代（设备自己连不上时用）。
+     * 连接方式：true = 直连（默认，设备自己挂了代理/TUN，直接访问 nhentai.net）；
+     * false = 走宿主本地反代，仅供开发者测试。
      *
      * 直连模式下图片地址不再改写成 /img?url=，而是让 Coil 直接请求原图床域名。
      */
-    val directMode: Boolean = false,
+    val directMode: Boolean = true,
     /** 自定义下载目录的 SAF tree URI（空 = 应用私有目录）。只影响切换之后的新下载。 */
     val downloadTree: String = "",
     /** 历史选择过的下载目录（SAF tree URI），用于继续读取旧目录里已下载的内容。 */
     val downloadTrees: List<String> = emptyList(),
     /** 下载页展示方式，持久化后冷启动保持上次选择。 */
     val downloadsViewMode: DownloadsViewMode = DownloadsViewMode.LIST,
+    /** 收藏页展示方式，持久化后冷启动保持上次选择。 */
+    val favoritesViewMode: FavoritesViewMode = FavoritesViewMode.GRID,
 ) {
     /**
      * 实际的 API 根地址。直连模式固定走官网，反代模式走用户在设置里填的地址。
@@ -89,7 +91,7 @@ class SettingsRepository(private val context: Context) {
         val LAYOUT = stringPreferencesKey("reader_layout")
         val RTL = booleanPreferencesKey("reader_rtl")
         val PRELOAD = intPreferencesKey("preload")
-        val QUALITY = stringPreferencesKey("image_quality")
+        val READER_START = stringPreferencesKey("reader_start_mode")
         val DARK = booleanPreferencesKey("dark_mode")
         val DYNAMIC = booleanPreferencesKey("dynamic_color")
         val SEED = stringPreferencesKey("seed_color")
@@ -101,6 +103,7 @@ class SettingsRepository(private val context: Context) {
         val DOWNLOAD_TREE = stringPreferencesKey("download_tree")
         val DOWNLOAD_TREES = stringSetPreferencesKey("download_trees")
         val DOWNLOADS_VIEW = stringPreferencesKey("downloads_view_mode")
+        val FAVORITES_VIEW = stringPreferencesKey("favorites_view_mode")
     }
 
     val settingsFlow: Flow<Settings> = context.dataStore.data.map { p ->
@@ -112,8 +115,8 @@ class SettingsRepository(private val context: Context) {
                 ?: ReaderLayout.PAGED_HORIZONTAL,
             readerRtl = p[Keys.RTL] ?: true,
             preloadCount = p[Keys.PRELOAD] ?: 3,
-            imageQuality = ImageQuality.entries.firstOrNull { it.name == p[Keys.QUALITY] }
-                ?: ImageQuality.ORIGINAL,
+            readerStartMode = ReaderStartMode.entries.firstOrNull { it.name == p[Keys.READER_START] }
+                ?: ReaderStartMode.RESUME,
             darkMode = p[Keys.DARK] ?: false,
             dynamicColor = p[Keys.DYNAMIC] ?: true,
             seedColor = p[Keys.SEED]?.toLongOrNull(16) ?: 0xFF6750A4,
@@ -121,11 +124,13 @@ class SettingsRepository(private val context: Context) {
             preferJapaneseTitle = p[Keys.JP_TITLE] ?: true,
             showPageNumber = p[Keys.PAGE_NUMBER] ?: true,
             foregroundDownloads = p[Keys.FOREGROUND_DOWNLOADS] ?: true,
-            directMode = p[Keys.DIRECT_MODE] ?: false,
+            directMode = p[Keys.DIRECT_MODE] ?: true,
             downloadTree = p[Keys.DOWNLOAD_TREE] ?: "",
             downloadTrees = (p[Keys.DOWNLOAD_TREES] ?: emptySet()).toList(),
             downloadsViewMode = DownloadsViewMode.entries.firstOrNull { it.name == p[Keys.DOWNLOADS_VIEW] }
                 ?: DownloadsViewMode.LIST,
+            favoritesViewMode = FavoritesViewMode.entries.firstOrNull { it.name == p[Keys.FAVORITES_VIEW] }
+                ?: FavoritesViewMode.GRID,
         )
     }
 
@@ -139,7 +144,9 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLayout(value: ReaderLayout) = edit { it[Keys.LAYOUT] = value.name }
     suspend fun setRtl(value: Boolean) = edit { it[Keys.RTL] = value }
     suspend fun setPreload(value: Int) = edit { it[Keys.PRELOAD] = value.coerceIn(1, 8) }
-    suspend fun setQuality(value: ImageQuality) = edit { it[Keys.QUALITY] = value.name }
+
+    /** 阅读器起始位置：接着上次读 / 从头读。 */
+    suspend fun setReaderStartMode(value: ReaderStartMode) = edit { it[Keys.READER_START] = value.name }
     suspend fun setDarkMode(value: Boolean) = edit { it[Keys.DARK] = value }
     suspend fun setDynamicColor(value: Boolean) = edit { it[Keys.DYNAMIC] = value }
     suspend fun setSeedColor(value: Long) = edit { it[Keys.SEED] = value.toString(16) }
@@ -151,7 +158,10 @@ class SettingsRepository(private val context: Context) {
     /** 切换下载页列表 / 网格视图（持久化，冷启动恢复）。 */
     suspend fun setDownloadsViewMode(value: DownloadsViewMode) = edit { it[Keys.DOWNLOADS_VIEW] = value.name }
 
-    /** 切换连接方式：直连 / 本地反代。切换后下一次请求即生效（图片拦截器每次读取）。 */
+    /** 切换收藏页列表 / 网格视图（持久化，冷启动恢复）。 */
+    suspend fun setFavoritesViewMode(value: FavoritesViewMode) = edit { it[Keys.FAVORITES_VIEW] = value.name }
+
+    /** 切换连接方式：直连 / 开发者测试用本地反代。切换后下一次请求即生效（图片拦截器每次读取）。 */
     suspend fun setDirectMode(value: Boolean) = edit { it[Keys.DIRECT_MODE] = value }
 
     /**

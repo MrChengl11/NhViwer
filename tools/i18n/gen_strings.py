@@ -178,6 +178,31 @@ SECTIONS = [
         ("confirmRemove", "Remove %1$d favorites?", "取消收藏 %1$d 本？"),
         ("removedN", "Removed %1$d favorites", "已取消收藏 %1$d 本"),
         ("defaultLabel", "Default", "默认"),
+        ("addedOn", "Added %1$s", "收藏于 %1$s"),
+        # 视图切换
+        ("viewList", "List view", "列表视图"),
+        ("viewGrid", "Grid view", "网格视图"),
+        # 筛选面板
+        ("filter", "Filter", "筛选"),
+        ("filterTitle", "Filter favorites", "筛选收藏"),
+        ("filterClear", "Clear all", "清除全部"),
+        ("reset", "Reset", "重置"),
+        ("sheetDone", "Done", "完成"),
+        ("filterDate", "Favorite date", "收藏日期"),
+        ("dateAll", "All time", "全部时间"),
+        ("dateToday", "Today", "今天"),
+        ("date7", "Last 7 days", "近 7 天"),
+        ("date30", "Last 30 days", "近 30 天"),
+        ("dateYear", "This year", "今年"),
+        ("dateCustom", "Custom…", "自定义…"),
+        ("dateRangeTitle", "Select date range", "选择日期范围"),
+        ("filterInitial", "Initial", "首字母"),
+        ("filterAll", "All", "全部"),
+        ("filterArtist", "Artist", "作者"),
+        ("filterCategory", "Category", "分类"),
+        ("filterNoArtists", "No artist info yet. Open a title or sync your account to fill it in.", "还没有作者信息，打开作品详情或同步账号后会补全"),
+        ("filterNoCategories", "No category info yet. Open a title or sync your account to fill it in.", "还没有分类信息，打开作品详情或同步账号后会补全"),
+        ("noFilterResult", "No favorites match the filters", "没有符合筛选条件的收藏"),
     ]),
     ("history", [
         ("title", "History", "阅读历史"),
@@ -234,13 +259,13 @@ SECTIONS = [
         ("goLogin", "Sign in", "去登录"),
         ("sectionNetwork", "Network", "网络连接"),
         ("networkHelp",
-         "Choose Direct when the device itself can open nhentai.net (proxy or TUN on the phone/tablet); no desktop proxy is needed. Use Local proxy only when the device cannot connect on its own.",
-         "设备自己能打开 nhentai.net（手机/平板上挂着代理或 TUN）时选「直连」，不需要电脑开反代；设备自己连不上时才需要「本地反代」。"),
-        ("localProxy", "Local proxy", "本地反代"),
-        ("directProxy", "Direct (via proxy)", "直连（已挂代理）"),
+         "Direct is the normal mode: this device connects to nhentai.net itself (use a proxy or TUN on the phone/tablet). Developer testing goes through a local reverse proxy and is meant for debugging only; leave it off for daily use.",
+         "「直连」是正常模式：由设备自己访问 nhentai.net（手机/平板挂代理或 TUN）。「开发者测试用」走本地反代，仅供开发调试，日常使用请保持直连。"),
+        ("localProxy", "Developer testing", "开发者测试用"),
+        ("directProxy", "Direct", "直连"),
         ("directNote", "Direct mode: API via %1$s; images load straight from the image CDN.", "直连模式：API 走 %1$s，图片直接请求图床域名。"),
         ("proxyAddress", "Proxy address", "反代地址"),
-        ("proxyHelp", "Run the proxy on the host first (default 8787), then run: adb reverse tcp:8787 tcp:8787.", "先在宿主机运行 proxy（默认 8787），再执行 adb reverse tcp:8787 tcp:8787。"),
+        ("proxyHelp", "Developer testing: run the proxy on the host first (default 8787), then run: adb reverse tcp:8787 tcp:8787.", "开发者测试用：先在宿主机运行 proxy（默认 8787），再执行 adb reverse tcp:8787 tcp:8787。"),
         ("saved", "Saved", "已保存"),
         ("save", "Save", "保存"),
         ("connectFailed", "Connection failed", "连接失败"),
@@ -254,7 +279,12 @@ SECTIONS = [
         ("ltr", "Left to right", "从左到右"),
         ("layout", "Layout", "布局"),
         ("preloadPages", "Preload pages: %1$d", "预加载页数：%1$d"),
-        ("quality", "Image quality", "画质"),
+        ("readerBehavior", "Reader behavior", "阅读器行为"),
+        ("readerBehaviorDesc",
+         "When you open a title, either start from page 1 or continue from the last page you read.",
+         "打开漫画时：从第 1 页开始读，或接着上次读到的页数继续。"),
+        ("startResume", "Resume last page", "接着上次读"),
+        ("startBeginning", "Start from page 1", "从头开始读"),
         ("sectionAppearance", "Appearance", "外观"),
         ("darkMode", "Dark mode", "深色模式"),
         ("dynamicColor", "Dynamic color (Android 12+)", "动态取色（Android 12+）"),
@@ -282,10 +312,6 @@ SECTIONS = [
         ("layoutDouble", "Two-page spread", "双页跨页"),
         ("layoutV", "Vertical paging", "上下翻页"),
         ("layoutContinuous", "Continuous scroll", "连续滚动"),
-        ("qualityOriginal", "Original", "原图"),
-        ("qualityHigh", "High", "高清"),
-        ("qualityMedium", "Medium", "中等"),
-        ("qualityLow", "Data saver", "省流"),
     ]),
     ("tagBrowse", [
         ("title", "Categories", "分类"),
@@ -469,7 +495,8 @@ def main() -> int:
     target = root / "android/app/src/main/java/com/mangaviewer/app/i18n/Strings.kt"
     target.parent.mkdir(parents=True, exist_ok=True)
     text = emit()
-    target.write_text(text, encoding="utf-8")
+    # newline="\n"：Windows 上也固定写 LF，避免生成物与仓库里其余文件行尾不一致。
+    target.write_text(text, encoding="utf-8", newline="\n")
     keys = sum(len(entries) for _, entries in SECTIONS)
     print("wrote %s (%d sections, %d keys)" % (target, len(SECTIONS), keys))
     return 0

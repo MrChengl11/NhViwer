@@ -66,15 +66,5 @@ class ImageProxyInterceptor(private val proxyBaseProvider: () -> String?) : Inte
             val hosts = if (thumb) THUMB_HOSTS else BIG_HOSTS
             return hosts.map { "https://" + it + ".nhentai.net/" + clean }
         }
-
-        /** 阅读页首选地址。 */
-        fun viewerCandidate(path: String, withQuality: (String) -> String): String {
-            val base = "https://i2.nhentai.net/" + path.trim('/')
-            return withQuality(base)
-        }
-
-        /** 阅读页的全部候选地址（带质量参数）。 */
-        fun viewerCandidates(path: String, withQuality: (String) -> String): List<String> =
-            candidates(path, thumb = false).map(withQuality)
     }
 }
